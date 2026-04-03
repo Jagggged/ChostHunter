@@ -1,0 +1,19 @@
+# Alertmanager 설정
+# Prometheus에서 발생한 Alert을 수신하여 Webhook으로 전달한다.
+# 특정 메신저(Slack, Discord 등)에 종속되지 않는 범용 Webhook 구조.
+
+global:
+  resolve_timeout: 5m         # Alert이 해소된 후 resolved 알림까지 대기 시간
+
+route:
+  receiver: "webhook-default"  # 기본 수신자
+  group_by: ["alertname", "container"]  # 같은 Alert + 컨테이너별로 그룹핑
+  group_wait: 30s              # 첫 Alert 발생 후 그룹 대기 시간 (동시 다발 묶기)
+  group_interval: 5m           # 같은 그룹의 후속 Alert 전송 간격
+  repeat_interval: 1h          # 동일 Alert 반복 알림 간격
+
+receivers:
+  - name: "webhook-default"
+    webhook_configs:
+      - url: "http://ai-agent:8000/api/v1/alerts"   # Remediation API 엔드포인트
+        send_resolved: true    # Alert 해소 시에도 알림 전송

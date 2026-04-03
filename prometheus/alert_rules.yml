@@ -1,0 +1,88 @@
+# Prometheus 알림 규칙
+# 컨테이너 리소스 급증(Spike)을 감지하기 위한 임계값 기반 규칙 정의.
+# 각 규칙은 일정 시간(for) 동안 조건이 지속되면 Alert을 발생시킨다.
+
+groups:
+  - name: container_resource_alerts
+    rules:
+
+      # ── CPU 급증 경고 ──────────────────────────────────────
+      # 컨테이너의 1분 평균 CPU 사용률이 80%를 5분간 초과하면 Warning
+      - alert: HighCpuUsage
+        expr: >
+          sum(rate(container_cpu_usage_seconds_total{name!=""}[1m])) by (name)
+          > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "컨테이너 {{ $labels.name }}의 CPU 사용량 급증"
+          description: "{{ $labels.name }}의 CPU 사용률이 {{ $value | printf \"%.2f\" }} cores로 5분간 임계값(0.8)을 초과했습니다."
+
+      # ── CPU 위험 수준 ──────────────────────────────────────
+      # CPU 사용률이 95%를 3분간 초과하면 Critical
+      - alert: CriticalCpuUsage
+        expr: >
+          sum(rate(container_cpu_usage_seconds_total{name!=""}[1m])) by (name)
+          > 0.95
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "컨테이너 {{ $labels.name }}의 CPU 사용량 위험"
+          description: "{{ $labels.name }}의 CPU 사용률이 {{ $value | printf \"%.2f\" }} cores로 3분간 위험 수준(0.95)을 초과했습니다."
+
+      # ── 메모리 급증 경고 ────────────────────────────────────
+      # 컨테이너의 메모리 사용량이 512MB를 5분간 초과하면 Warning
+      - alert: HighMemoryUsage
+        expr: >
+          container_memory_usage_bytes{name!=""}
+          > 536870912
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "컨테이너 {{ $labels.name }}의 메모리 사용량 급증"
+          description: "{{ $labels.name }}의 메모리 사용량이 {{ $value | humanize1024 }}B로 5분간 임계값(512MB)을 초과했습니다."
+
+      # ── 메모리 위험 수준 ────────────────────────────────────
+      # 메모리 사용량이 1GB를 3분간 초과하면 Critical
+      - alert: CriticalMemoryUsage
+        expr: >
+          container_memory_usage_bytes{name!=""}
+          > 1073741824
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "컨테이너 {{ $labels.name }}의 메모리 사용량 위험"
+          description: "{{ $labels.name }}의 메모리 사용량이 {{ $value | humanize1024 }}B로 3분간 위험 수준(1GB)을 초과했습니다."
+
+      # ── 네트워크 트래픽 급증 ─────────────────────────────────
+      # 수신 트래픽이 초당 50MB를 5분간 초과하면 Warning
+      - alert: HighNetworkReceive
+        expr: >
+          sum(rate(container_network_receive_bytes_total{name!=""}[1m])) by (name)
+          > 52428800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "컨테이너 {{ $labels.name }}의 네트워크 수신량 급증"
+          description: "{{ $labels.name }}의 네트워크 수신량이 {{ $value | humanize1024 }}B/s로 임계값(50MB/s)을 초과했습니다."
+
+      # ── 컨테이너 재시작 반복 ─────────────────────────────────
+      # 최근 30분간 재시작이 3회 이상이면 Warning (불안정 컨테이너 탐지)
+      - alert: ContainerRestartLoop
+        expr: >
+          increase(container_last_seen{name!=""}[30m])
+          - increase(container_last_seen{name!=""}[30m])
+          >= 0
+          and
+          rate(container_last_seen{name!=""}[5m]) == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "컨테이너 {{ $labels.name }} 비정상 종료 감지"
+          description: "{{ $labels.name }} 컨테이너가 응답하지 않습니다."

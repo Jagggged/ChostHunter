@@ -6,7 +6,7 @@ services:
   # 호스트의 cgroup, proc 등 시스템 디렉토리를 읽기 전용으로 마운트하여
   # 컨테이너별 리소스 사용량을 추출한다.
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: ghcr.io/google/cadvisor:latest
     container_name: cadvisor
     privileged: true
     ports:
@@ -15,9 +15,10 @@ services:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
       - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      - /var/lib/containerd/:/var/lib/containerd:ro
+      - /dev/disk/:/dev/disk:ro
     devices:
       - /dev/kmsg
     command:
@@ -37,6 +38,7 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -45,7 +47,24 @@ services:
       - cadvisor
     restart: unless-stopped
 
-  # ── 3. Grafana ───────────────────────────────────────────────
+  # ── 3. Alertmanager ─────────────────────────────────────────
+  # Prometheus에서 발생한 Alert을 수신하고,
+  # 그룹핑/중복 제거 후 Webhook으로 외부에 전달한다.
+  # 특정 메신저에 종속되지 않는 범용 Webhook 구조를 사용한다.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # ── 4. Grafana ───────────────────────────────────────────────
   # Prometheus를 데이터소스로 연결하여
   # 컨테이너별 리소스 사용량을 대시보드로 시각화한다.
   # 자동 프로비저닝으로 Prometheus 데이터소스가 미리 등록된다.
