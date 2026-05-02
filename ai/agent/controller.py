@@ -21,10 +21,19 @@ _client = None
 
 
 def get_client() -> docker.DockerClient:
-    """Docker 클라이언트 싱글톤"""
+    """
+    Docker 클라이언트 싱글톤.
+
+    DOCKER_SOCKET이 명시되어 있으면 그 경로(Linux 운영용)를 사용하고,
+    비어 있으면 docker.from_env()로 환경 자동 감지 (Windows/Mac Docker Desktop은
+    named pipe, Linux는 unix socket을 자동 선택).
+    """
     global _client
     if _client is None:
-        _client = docker.DockerClient(base_url=config.DOCKER_SOCKET)
+        if config.DOCKER_SOCKET:
+            _client = docker.DockerClient(base_url=config.DOCKER_SOCKET)
+        else:
+            _client = docker.from_env()
     return _client
 
 
@@ -51,17 +60,38 @@ def update_limits(container_name: str, cpu_quota: float, memory_bytes: int) -> d
     }
 
     new_cpu_quota = int(cpu_quota * CPU_PERIOD_DEFAULT)
-    container.update(cpu_quota=new_cpu_quota, mem_limit=memory_bytes)
+    # memswap을 mem_limit과 같게 설정해야 Docker가 거부하지 않음
+    # (Docker 규칙: memswap_limit >= mem_limit 필수)
+    container.update(
+        cpu_quota=new_cpu_quota,
+        mem_limit=memory_bytes,
+        memswap_limit=memory_bytes,
+    )
     return prev
 
 
 def rollback_limits(container_name: str, prev: dict) -> None:
-    """이전 limit으로 즉시 복구한다 (Watchdog에서 호출)."""
+    """
+    이전 limit으로 즉시 복구한다 (Watchdog에서 호출).
+
+    주의: Docker는 mem_limit=0을 "0 bytes"로 해석해 거부한다("Minimum memory limit allowed is 6MB").
+    원래 unlimited(0)였던 컨테이너로 되돌릴 때는 -1을 보내야 한다.
+    cpu_quota=-1은 quota 해제(unlimited)를 의미한다.
+    """
     client = get_client()
     container = client.containers.get(container_name)
+
+    prev_cpu = prev.get("cpu_quota", 0)
+    prev_mem = prev.get("memory_bytes", 0)
+
+    # 0(unlimited)이면 -1로 변환해서 Docker에게 "제한 해제"를 명시
+    cpu_quota = prev_cpu if prev_cpu > 0 else -1
+    mem_limit = prev_mem if prev_mem > 0 else -1
+
     container.update(
-        cpu_quota=prev.get("cpu_quota", 0),
-        mem_limit=prev.get("memory_bytes", 0) or -1,   # -1 = unlimited
+        cpu_quota=cpu_quota,
+        mem_limit=mem_limit,
+        memswap_limit=mem_limit,
     )
 
 
