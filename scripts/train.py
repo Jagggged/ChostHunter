@@ -23,7 +23,7 @@ import argparse
 import numpy as np
 
 from ai import config
-from ai.data.loader import build_dataset, save_scaler
+from ai.data.loader import balance_dataset, build_dataset, save_scaler
 from ai.model.trainer import pretrain
 
 
@@ -60,6 +60,11 @@ def main():
     X_train, X_val = X[:split], X[split:]
     y_train, y_val = y[:split], y[split:]
     print(f"      train={len(X_train)}, val={len(X_val)}")
+
+    # 오버샘플링은 train에만 적용 (val은 원본 분포 유지해서 평가 일관성 확보)
+    if config.USE_OVERSAMPLING:
+        print("[2.5/3] 스파이크 오버샘플링 (train만)")
+        X_train, y_train = balance_dataset(X_train, y_train, scaler)
 
     print(f"[3/3] 사전 학습 시작 (epochs={config.EPOCHS})")
     pretrain(X_train, y_train, X_val, y_val)

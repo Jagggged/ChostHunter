@@ -22,6 +22,8 @@ def parse_args():
                    help="확인용 VM CSV 수 (다양성 위해 5~20 권장)")
     p.add_argument("--n-samples", type=int, default=5,
                    help="출력할 샘플 수")
+    p.add_argument("--batch-size", type=int, default=4096,
+                   help="추론 배치 크기 (GPU VRAM에 맞춰 조절)")
     return p.parse_args()
 
 
@@ -57,9 +59,15 @@ def main():
     X_val, y_val = X[split:], y[split:]
     print(f"      val samples={len(X_val)}")
 
-    print("[3/4] 전체 검증셋 RMSE")
+    print(f"[3/4] 전체 검증셋 RMSE (batch={args.batch_size})")
+    # 한 번에 GPU에 올리면 OOM이 나므로 batch 단위로 나눠서 추론
+    pred_chunks = []
     with torch.no_grad():
-        pred = model(torch.from_numpy(X_val).float().to(device)).cpu().numpy()
+        for start in range(0, len(X_val), args.batch_size):
+            end = start + args.batch_size
+            xb = torch.from_numpy(X_val[start:end]).float().to(device)
+            pred_chunks.append(model(xb).cpu().numpy())
+    pred = np.concatenate(pred_chunks, axis=0)
 
     rmse_scaled = np.sqrt(np.mean((pred - y_val) ** 2))
     pred_un = scaler.inverse_transform(pred.reshape(-1, 2)).reshape(pred.shape)

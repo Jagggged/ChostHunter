@@ -23,6 +23,27 @@ from ai import config
 from ai.model.lstm import LightweightLSTM, build_model, get_device
 
 
+class WeightedMSELoss(nn.Module):
+    """
+    정답값에 비례한 가중치를 둔 MSE Loss.
+
+    weight = 1 + alpha * normalized_target
+    - 유휴 샘플(target ≈ 0): weight ≈ 1 (기존 MSE와 동일)
+    - 스파이크 샘플(target ≈ 1): weight ≈ 1 + alpha (오차에 큰 페널티)
+
+    Bitbrain의 99% 유휴 분포에서 model collapse(평균값만 출력)를 방지한다.
+    오버샘플링과 함께 쓰면 더 효과적이다.
+    """
+
+    def __init__(self, alpha: float = config.WEIGHTED_LOSS_ALPHA):
+        super().__init__()
+        self.alpha = alpha
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        weight = 1.0 + self.alpha * target
+        return (weight * (pred - target) ** 2).mean()
+
+
 def _make_dataloader(
     X: np.ndarray, y: np.ndarray, batch_size: int, shuffle: bool
 ) -> DataLoader:
@@ -103,7 +124,15 @@ def pretrain(
     """
     device = get_device()
     model = build_model().to(device)
-    criterion = nn.MSELoss()
+
+    # 학습용 Loss: 가중 MSE (스파이크 강조) 또는 일반 MSE
+    train_criterion = (
+        WeightedMSELoss(config.WEIGHTED_LOSS_ALPHA)
+        if config.USE_WEIGHTED_LOSS else nn.MSELoss()
+    )
+    # 평가용 Loss: 항상 일반 MSE (RMSE 비교 일관성을 위해)
+    eval_criterion = nn.MSELoss()
+
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=config.LEARNING_RATE,
@@ -117,8 +146,9 @@ def pretrain(
         if has_val else None
     )
 
-    print(f"[pretrain] device={device}, train_samples={len(X)}, "
-          f"val_samples={len(X_val) if has_val else 0}")
+    loss_kind = "WeightedMSE" if config.USE_WEIGHTED_LOSS else "MSE"
+    print(f"[pretrain] device={device}, loss={loss_kind}, "
+          f"train_samples={len(X)}, val_samples={len(X_val) if has_val else 0}")
 
     history = {
         "epoch": [],
@@ -136,13 +166,13 @@ def pretrain(
     patience_counter = 0
 
     for epoch in range(1, config.EPOCHS + 1):
-        train_loss = _train_one_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss = _train_one_epoch(model, train_loader, train_criterion, optimizer, device)
         msg = f"[Epoch {epoch:02d}/{config.EPOCHS}] train_loss={train_loss:.6f}"
 
         val_loss = None
         val_rmse = None
         if val_loader is not None:
-            val_loss = _evaluate(model, val_loader, criterion, device)
+            val_loss = _evaluate(model, val_loader, eval_criterion, device)
             # MSE → RMSE (정규화된 [0,1] 단위 기준; 추후 inverse_scale 시 원 단위 환산)
             val_rmse = math.sqrt(val_loss)
             msg += f"  val_loss={val_loss:.6f}  val_rmse={val_rmse:.6f}"
