@@ -119,6 +119,15 @@ function statusClass(status) {
   return 'waste';
 }
 
+function displayReason(action) {
+  const reason = action.reason || action.error || action.status;
+  if (!reason) return action.status;
+  if (reason.includes('No such container') || reason.includes('404 Client Error')) {
+    return 'container does not exist';
+  }
+  return reason;
+}
+
 function limitLine(label, currentValue, targetValue, formatter, isApplied) {
   if (isApplied) {
     return `
@@ -315,10 +324,11 @@ function recommendationMarkup(item, containerState) {
   const recommended = item.recommended_limits || {};
   const applied = item.applied_limits || recommended;
   const badgeClass = statusClass(item.status);
-  const canApply = item.status === 'recommended' && recommended.cpu_quota != null;
+  const canApply = Boolean(containerState) && item.status === 'recommended' && recommended.cpu_quota != null;
   const isApplied = item.status === 'applied';
   const effectivePolicy = containerState?.policy || item.policy;
   const policySource = containerState?.policy_source || item.policy;
+  const missingContainer = !containerState;
 
   return `
     <div class="waste-item">
@@ -339,8 +349,8 @@ function recommendationMarkup(item, containerState) {
         </div>
       </div>
       <div class="action-row">
-        <span>${policySource} policy</span>
-        ${policySelectMarkup(item.container, effectivePolicy)}
+        <span>${missingContainer ? 'container not found' : `${policySource} policy`}</span>
+        ${missingContainer ? '' : policySelectMarkup(item.container, effectivePolicy)}
         ${canApply ? `<button class="action-btn" data-action-id="${item.id}">Apply</button>` : ''}
       </div>
     </div>
@@ -379,7 +389,7 @@ function renderHistory(actions) {
 
   list.innerHTML = actions.map(action => {
     const badgeClass = action.status === 'failed' ? 'warning' : 'info';
-    const reason = action.error || action.reason || action.status;
+    const reason = displayReason(action);
     return `
       <li>
         <span class="time">${formatTime(action.timestamp)}</span>

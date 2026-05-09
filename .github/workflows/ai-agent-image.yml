@@ -53,7 +53,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run unit tests
-        run: pytest -q
+        run: python -m pytest -q
 
       - name: Validate Docker Compose config
         run: docker compose config

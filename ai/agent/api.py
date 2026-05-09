@@ -22,6 +22,7 @@ from ai.agent.action_log import (
     record_action,
 )
 from ai.agent.controller import list_managed_containers, update_limits
+from ai.agent.controller import container_exists
 from ai.agent.global_state import read_global_state, set_autopilot_enabled
 from ai.agent.notifier import send_test_notification
 from ai.agent.policy_store import set_policy_override
@@ -59,7 +60,7 @@ class ControlAPIHandler(BaseHTTPRequestHandler):
             elif path == "/api/actions/latest":
                 self._send_json({"action": latest_action()})
             elif path == "/api/recommendations/latest":
-                self._send_json({"recommendations": latest_recommendations()})
+                self._handle_get_latest_recommendations()
             elif path == "/api/containers":
                 self._send_json({
                     "containers": list_managed_containers(include_skipped=True)
@@ -105,6 +106,16 @@ class ControlAPIHandler(BaseHTTPRequestHandler):
         actions = read_actions(limit=limit, status=status, container_name=container)
         self._send_json({"actions": actions})
 
+    def _handle_get_latest_recommendations(self) -> None:
+        managed = list_managed_containers(include_skipped=True)
+        existing_names = {container["name"] for container in managed}
+        recommendations = [
+            recommendation
+            for recommendation in latest_recommendations()
+            if recommendation.get("container") in existing_names
+        ]
+        self._send_json({"recommendations": recommendations})
+
     def _handle_apply_action(self, action_id: str) -> None:
         action = get_action(action_id)
         if action is None:
@@ -120,15 +131,31 @@ class ControlAPIHandler(BaseHTTPRequestHandler):
             return
 
         container_name = action.get("container")
-        try:
-            prev = update_limits(container_name, **recommended)
-        except Exception as exc:
+        if not container_exists(container_name):
+            reason = "container does not exist"
             failed = record_action(
                 container_name=container_name,
                 policy="manual",
                 status="failed",
                 current_limits=action.get("current_limits"),
                 recommended_limits=recommended,
+                reason=reason,
+                error=f"No such container: {container_name}",
+            )
+            self._send_json({"action": failed}, HTTPStatus.NOT_FOUND)
+            return
+
+        try:
+            prev = update_limits(container_name, **recommended)
+        except Exception as exc:
+            reason = _friendly_error_message(exc)
+            failed = record_action(
+                container_name=container_name,
+                policy="manual",
+                status="failed",
+                current_limits=action.get("current_limits"),
+                recommended_limits=recommended,
+                reason=reason,
                 error=str(exc),
             )
             self._send_json({"action": failed}, HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -258,6 +285,13 @@ def create_server(
 ) -> ThreadingHTTPServer:
     """Create, but do not start, the control API server."""
     return ThreadingHTTPServer((host, port), ControlAPIHandler)
+
+
+def _friendly_error_message(exc: Exception) -> str:
+    message = str(exc)
+    if "No such container" in message or "404 Client Error" in message:
+        return "container does not exist"
+    return message[:200]
 
 
 def start_api_server(

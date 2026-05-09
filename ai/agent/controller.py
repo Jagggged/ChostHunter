@@ -10,6 +10,7 @@ CPU quota 변환:
 """
 
 import docker
+from docker.errors import NotFound
 
 from ai import config
 from ai.agent.policy_store import get_policy_override
@@ -78,6 +79,15 @@ def get_container_limits(container_name: str) -> dict:
     client = get_client()
     container = client.containers.get(container_name)
     return _extract_limits(container)
+
+
+def container_exists(container_name: str) -> bool:
+    """Return whether a Docker container exists."""
+    try:
+        get_client().containers.get(container_name)
+    except NotFound:
+        return False
+    return True
 
 
 def _extract_limits(container) -> dict:
