@@ -1,0 +1,14 @@
+.git
+.github
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+venv/
+datasets/
+logs/
+chost-hunter-mockup/
+grafana/
+prometheus/
+alertmanager/
+images/
