@@ -73,14 +73,14 @@ WATCHDOG_INTERVAL_SEC = 1       # 1초마다 사용률 체크
 WATCHDOG_THRESHOLD = 0.90       # 사용률 90% 초과 시 롤백
 
 # ── 외부 연동 ─────────────────────────────────────────────
-PROMETHEUS_URL = "http://localhost:9090"
-DOCKER_SOCKET = ""  # 비워두면 docker.from_env()로 자동 감지 (Windows: named pipe, Linux: unix socket).
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://localhost:9090")
+DOCKER_SOCKET = os.getenv("DOCKER_SOCKET", "")  # 비워두면 docker.from_env()로 자동 감지 (Windows: named pipe, Linux: unix socket).
 # 운영(Linux 서버)에서 명시 강제하려면 "unix://var/run/docker.sock" 사용.
 
 # ── Control API ───────────────────────────────────────────
-ENABLE_CONTROL_API = True
-CONTROL_API_HOST = "127.0.0.1"
-CONTROL_API_PORT = 8000
+ENABLE_CONTROL_API = os.getenv("ENABLE_CONTROL_API", "true").lower() == "true"
+CONTROL_API_HOST = os.getenv("CONTROL_API_HOST", "127.0.0.1")
+CONTROL_API_PORT = int(os.getenv("CONTROL_API_PORT", "8000"))
 
 # ── 컨테이너 라벨 정책 ─────────────────────────────────────
 # 운영자가 컨테이너에 라벨을 붙여 AI 동작을 제어할 수 있다.
