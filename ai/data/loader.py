@@ -51,6 +51,38 @@ def load_directory(directory: str, max_files: int | None = None) -> list[pd.Data
     return [load_csv(p) for p in paths]
 
 
+def filter_active_vms(
+    dfs: list[pd.DataFrame],
+    min_cpu_max: float = config.ACTIVE_VM_MIN_CPU_MAX,
+    min_cpu_std: float = config.ACTIVE_VM_MIN_CPU_STD,
+) -> list[pd.DataFrame]:
+    """
+    "활성 VM"만 필터링한다.
+
+    Bitbrain의 1,250개 VM 중 다수는 항상 CPU 0% 근처인 "죽은 VM"이라 학습 신호를 흐린다.
+    CPU max가 임계 % 이상이거나 표준편차가 충분히 큰 VM만 남겨,
+    오버샘플링/가중치 없이도 자연스럽게 데이터 균형을 맞춘다.
+
+    필터 기준 (둘 중 하나만 만족하면 통과):
+    - CPU max >= min_cpu_max  : 한 번이라도 의미 있는 부하가 있었던 VM
+    - CPU std >= min_cpu_std  : 변동성이 있는 VM (작은 값에서도 패턴이 있는 경우)
+    """
+    active = []
+    rejected = 0
+    for df in dfs:
+        if CPU_COL not in df.columns:
+            continue
+        cpu = df[CPU_COL]
+        if cpu.max() >= min_cpu_max or cpu.std() >= min_cpu_std:
+            active.append(df)
+        else:
+            rejected += 1
+
+    print(f"[filter] 활성 VM {len(active)} / 비활성 {rejected} "
+          f"(기준: max>={min_cpu_max}% or std>={min_cpu_std})")
+    return active
+
+
 def preprocess(df: pd.DataFrame, feature_cols: list[str] = FEATURE_COLS) -> pd.DataFrame:
     """
     필요한 컬럼만 추출하고 결측치를 채운다.
@@ -119,6 +151,66 @@ def to_sliding_window(
     return X, y
 
 
+def balance_dataset(
+    X: np.ndarray,
+    y: np.ndarray,
+    scaler: MinMaxScaler,
+    threshold_pct: float = config.SPIKE_CPU_THRESHOLD_PCT,
+    max_ratio: int = config.MAX_OVERSAMPLE_RATIO,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    스파이크 샘플을 오버샘플링하여 데이터 불균형을 완화한다.
+
+    Bitbrain은 유휴 샘플이 99%라 모델이 평균(거의 0%)만 출력하면 MSE가 작게 나오는
+    Model Collapse가 발생한다. 스파이크 샘플을 N배 복제해서 학습 신호를 키운다.
+
+    Args:
+        X, y: 학습 데이터 (정규화된 [0, 1] 범위)
+        scaler: 학습된 MinMaxScaler (역정규화로 원 단위 CPU% 확인용)
+        threshold_pct: 정답 horizon의 max CPU%가 이 값 이상이면 스파이크
+        max_ratio: 스파이크 샘플 1개당 최대 복제 배수 (메모리 보호)
+
+    Returns:
+        (X_balanced, y_balanced): 스파이크 비율이 끌어올려진 데이터셋
+    """
+    n_samples, horizon, n_feats = y.shape
+
+    # 정답값을 원 단위로 환원해 CPU% 임계값 검사 (CPU는 컬럼 0)
+    y_flat = y.reshape(-1, n_feats)
+    y_unscaled = scaler.inverse_transform(y_flat).reshape(n_samples, horizon, n_feats)
+    cpu_max_per_sample = y_unscaled[:, :, 0].max(axis=1)
+
+    spike_mask = cpu_max_per_sample >= threshold_pct
+    n_spike = int(spike_mask.sum())
+    n_idle = n_samples - n_spike
+
+    if n_spike == 0:
+        print(f"[balance] 스파이크 샘플 없음 (threshold={threshold_pct}%) - 원본 반환")
+        return X, y
+
+    # 유휴 샘플 수에 맞춰 복제 배수 결정 (단, max_ratio로 상한)
+    desired_ratio = n_idle / n_spike
+    actual_ratio = min(int(desired_ratio), max_ratio)
+    actual_ratio = max(actual_ratio, 1)
+
+    spike_indices = np.where(spike_mask)[0]
+    duplicated_indices = np.repeat(spike_indices, actual_ratio)
+
+    X_aug = np.concatenate([X, X[duplicated_indices]], axis=0)
+    y_aug = np.concatenate([y, y[duplicated_indices]], axis=0)
+
+    # 시간 순서를 유지하기보다 무작위 셔플 — 학습 시 안정성 향상
+    perm = np.random.permutation(len(X_aug))
+    X_aug = X_aug[perm]
+    y_aug = y_aug[perm]
+
+    print(f"[balance] 원본: {n_samples} (idle={n_idle}, spike={n_spike}) "
+          f"→ {actual_ratio}배 복제 후 {len(X_aug)} 샘플")
+    print(f"[balance] 스파이크 비율: {n_spike/n_samples*100:.2f}% "
+          f"→ {(n_spike*actual_ratio)/(n_samples + n_spike*(actual_ratio-1))*100:.2f}%")
+    return X_aug, y_aug
+
+
 def build_dataset(
     directory: str,
     window_size: int = config.WINDOW_SIZE,
@@ -137,6 +229,11 @@ def build_dataset(
         scaler: 학습된 스케일러 (운영에서 동일 변환 적용에 사용)
     """
     raw_dfs = load_directory(directory, max_files=max_files)
+
+    # 죽은 VM(항상 0%)을 제거해 데이터 균형을 자연 개선
+    if config.USE_ACTIVE_VM_FILTER:
+        raw_dfs = filter_active_vms(raw_dfs)
+
     pre_dfs = [preprocess(df) for df in raw_dfs]
     scaler = fit_scaler(pre_dfs)
 

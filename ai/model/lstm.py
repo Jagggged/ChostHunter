@@ -4,13 +4,14 @@ Lightweight LSTM 모델 정의 (PyTorch)
 
 Lightweight 설계 이유:
 - 추론 자체가 시스템 부하가 되면 안 됨 (오버헤드 최소화)
-- 2층 LSTM (64 -> 32 unit) + Linear + Sigmoid
+- 2층 LSTM (64 -> 32 unit) + Linear + Softplus
 
-출력에 ReLU를 두는 이유:
-- 음수 예측(메모리/CPU 음수) 원천 차단
-- Bitbrain은 유휴(거의 0%) 데이터가 압도적이라, 모델이 0을 빠르게 예측해야 함
-- Sigmoid는 saturation 영역에서 그래디언트가 작아 0 근처 학습이 느림
-- ReLU는 음수만 0으로 클램프하므로 Linear와 비슷한 수렴 속도 + 음수 차단
+출력에 Softplus를 두는 이유:
+- 음수 예측(메모리/CPU 음수) 원천 차단 (출력이 항상 > 0)
+- Bitbrain은 유휴(거의 0%) 데이터가 압도적이라, 모델이 0 근처를 부드럽게 예측해야 함
+- Sigmoid는 saturation 영역(0, 1 근처)에서 그래디언트가 작아 학습이 느림
+- ReLU는 pre-activation이 음수면 gradient=0인 dead-ReLU 문제로 학습이 멈출 수 있음
+- Softplus는 ReLU의 부드러운 근사로, 어디서든 gradient > 0 → dead zone 없이 안정 학습
 
 PyTorch를 선택한 이유:
 - 동적 그래프로 Online Learning 시 학습 루프 제어가 유연함
@@ -61,7 +62,8 @@ class LightweightLSTM(nn.Module):
         self.fc = nn.Linear(units[1], horizon * n_features)
 
         # 음수 예측 차단 (메모리/CPU는 비음수). [0, 1] 상한은 강제하지 않음.
-        self.activation = nn.ReLU()
+        # Softplus: ln(1 + e^x) — 어디서든 gradient > 0 (dead zone 없음)
+        self.activation = nn.Softplus()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

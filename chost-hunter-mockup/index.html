@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chost Hunter Dashboard</title>
+  <link rel="stylesheet" href="./styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Chart.js for mock graphs -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="dashboard-wrapper">
+    <header class="dashboard-header">
+      <div class="header-left">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" class="grafana-logo"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" fill="currentColor"/></svg>
+        </div>
+        <h1>Chost Hunter - Monitoring & Optimization</h1>
+      </div>
+      <div class="header-right">
+        <span class="time-range">Last 6 hours</span>
+        <button class="btn-refresh"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg></button>
+      </div>
+    </header>
+
+    <main class="dashboard-grid">
+      <!-- Left side: Existing Grafana Panels -->
+      <section class="grafana-area">
+        <div class="panel">
+          <div class="panel-header">
+            <h3>CPU Usage per Container</h3>
+            <span class="panel-desc">Cores or %</span>
+          </div>
+          <div class="panel-content">
+            <canvas id="chart-cpu"></canvas>
+          </div>
+        </div>
+        
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Memory Usage per Container</h3>
+            <span class="panel-desc">Megabytes (MB)</span>
+          </div>
+          <div class="panel-content">
+            <canvas id="chart-mem"></canvas>
+          </div>
+        </div>
+        
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Network RX per Container</h3>
+            <span class="panel-desc">Bytes/sec</span>
+          </div>
+          <div class="panel-content">
+            <canvas id="chart-rx"></canvas>
+          </div>
+        </div>
+        
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Network TX per Container</h3>
+            <span class="panel-desc">Bytes/sec</span>
+          </div>
+          <div class="panel-content">
+            <canvas id="chart-tx"></canvas>
+          </div>
+        </div>
+        
+        <div class="panel">
+          <div class="panel-header">
+            <h3>CPU Usage Ranking</h3>
+          </div>
+          <div class="panel-content bar-gauges" id="bar-cpu">
+            <!-- Injected by JS -->
+          </div>
+        </div>
+        
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Memory Usage Ranking</h3>
+          </div>
+          <div class="panel-content bar-gauges" id="bar-mem">
+            <!-- Injected by JS -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Right side: Chost Hunter AI Plugins -->
+      <section class="chost-area">
+        
+        <!-- Waste Analysis -->
+        <div class="panel chost-special">
+          <div class="panel-header chost-header">
+            <h3><span class="icon">AI</span> Resource Recommendations</h3>
+            <span class="tag">AI Engine: LSTM</span>
+          </div>
+          <div class="panel-content padding-card">
+            
+            <div class="total-savings">
+              <div class="savings-title">Runtime Decisions</div>
+              <div class="savings-amount">$23.50 <span>/ month</span></div>
+            </div>
+
+            <div class="waste-list" id="waste-list">
+              <!-- Injected by JS -->
+            </div>
+            
+          </div>
+        </div>
+
+        <!-- Auto Optimization -->
+        <div class="panel chost-special">
+          <div class="panel-header chost-header">
+            <h3><span class="icon">ON</span> Auto Resource Optimization</h3>
+          </div>
+          <div class="panel-content padding-card">
+            
+            <div class="optimization-control">
+              <div class="control-status">
+                <span id="optimization-label" class="label-off">Status: Disabled</span>
+                <p id="optimization-desc" class="desc">Recommendations are visible, but automatic updates are disabled.</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="toggle-optimization">
+                <span class="slider round"></span>
+              </label>
+            </div>
+
+            <div class="interval-setting disabled" id="interval-setting">
+              <label for="interval-select">Update Interval:</label>
+              <select id="interval-select" disabled>
+                <option value="5">5 Minutes</option>
+                <option value="10" selected>10 Minutes</option>
+                <option value="30">30 Minutes</option>
+              </select>
+            </div>
+
+            <div class="notification-setting">
+              <div class="notification-header">
+                <div>
+                  <span id="slack-label" class="label-off">Slack: Not Connected</span>
+                  <p id="slack-desc" class="desc">No webhook configured.</p>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggle-slack">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              <div class="slack-form">
+                <input
+                  type="password"
+                  id="slack-webhook-input"
+                  placeholder="Slack webhook URL"
+                  autocomplete="off"
+                >
+                <button class="action-btn" id="slack-save-btn">Save</button>
+                <button class="action-btn secondary" id="slack-test-btn">Test</button>
+              </div>
+              <div id="slack-feedback" class="feedback-line"></div>
+            </div>
+
+            <div class="history-section">
+              <h4>Recent Actions</h4>
+              <ul class="history-list" id="history-list">
+                <li>Loading action history...</li>
+              </ul>
+            </div>
+
+          </div>
+        </div>
+
+      </section>
+    </main>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

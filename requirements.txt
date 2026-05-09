@@ -20,3 +20,6 @@ joblib==1.4.2
 
 # Preprocessing (MinMaxScaler etc.)
 scikit-learn==1.5.0
+
+# Training curve visualization (renders training history PNG for review/presentation)
+matplotlib==3.9.0
