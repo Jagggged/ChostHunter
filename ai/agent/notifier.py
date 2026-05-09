@@ -24,14 +24,39 @@ def _format_limits(limits: dict | None) -> str:
         return "-"
     cpu = limits.get("cpu_quota")
     mem = limits.get("memory_bytes")
-    return f"cpu={cpu}, mem={mem}"
+    return f"CPU {_format_cpu(cpu)}, Memory {_format_bytes(mem)}"
+
+
+def _format_cpu(cpu_quota: float | int | None) -> str:
+    if cpu_quota is None:
+        return "-"
+    if cpu_quota == 0:
+        return "unlimited"
+    if cpu_quota > 1000:
+        return f"{cpu_quota / 100000:.2f} cores"
+    return f"{float(cpu_quota):.2f} cores"
+
+
+def _format_bytes(memory_bytes: int | None) -> str:
+    if memory_bytes is None:
+        return "-"
+    if memory_bytes == 0:
+        return "unlimited"
+    units = ["B", "KB", "MB", "GB"]
+    value = float(memory_bytes)
+    unit_index = 0
+    while value >= 1024 and unit_index < len(units) - 1:
+        value /= 1024
+        unit_index += 1
+    precision = 0 if value >= 10 else 1
+    return f"{value:.{precision}f} {units[unit_index]}"
 
 
 def _build_slack_payload(action: dict) -> dict:
     status = action.get("status", "unknown")
     container = action.get("container", "unknown")
     policy = action.get("policy", "unknown")
-    reason = action.get("error") or action.get("reason") or ""
+    reason = action.get("reason") or action.get("error") or ""
 
     text = f"Chost Hunter: {status} - {container}"
     fields = [
