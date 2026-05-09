@@ -87,8 +87,7 @@ services:
   # Prometheus에서 컨테이너 메트릭을 조회하고,
   # LSTM 추론 결과에 따라 Docker 리소스 limit을 권고/적용한다.
   ai-agent:
-    build: .
-    image: chost-hunter-agent:latest
+    image: ghcr.io/jagggged/chost-hunter-agent:develop
     container_name: ai-agent
     ports:
       - "8000:8000"
