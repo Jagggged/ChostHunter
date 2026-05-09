@@ -55,3 +55,114 @@ cp .env.example .env
 
 # 3. Launch the system
 docker-compose up -d
+```
+
+## Runtime Control Policy
+
+The AI agent supports three container policies through Docker labels:
+
+```yaml
+labels:
+  - "chost-hunter.policy=auto"      # apply AI recommendations with docker update
+  - "chost-hunter.policy=advisory"  # print recommendations only
+  - "chost-hunter.skip=true"        # ignore the container completely
+```
+
+If a container has no Chost Hunter label and either `CpuQuota` or `Memory` is
+`0`, Docker treats that limit as unlimited. Chost Hunter handles this case as
+`advisory` by default, even when `DEFAULT_POLICY` is `auto`, because an operator
+may have intentionally left a critical service unlimited. To let the AI create
+the first limit for an unlimited container, add `chost-hunter.policy=auto`
+explicitly.
+
+The runtime loop performs inference only. Online fine-tuning is disabled by
+default (`ENABLE_ONLINE_FINETUNE = False`) so model training overhead cannot
+outweigh the resource savings during normal operation.
+
+## Action Log
+
+Every control-loop decision is appended to `logs/actions.jsonl`.
+
+Each line contains a single JSON object with:
+
+- `container`: target container name
+- `policy`: `auto`, `advisory`, or `skip`
+- `status`: `recommended`, `applied`, `skipped`, or `failed`
+- `current_limits`, `recommended_limits`, `applied_limits`, `previous_limits`
+- `reason` or `error` when the agent did not apply a recommendation
+
+Quick inspection:
+
+```bash
+tail -n 5 logs/actions.jsonl
+```
+
+## Control API
+
+When `ENABLE_CONTROL_API = True`, the AI agent starts a local API on
+`http://127.0.0.1:8000`.
+
+Useful endpoints:
+
+```bash
+curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:8000/api/actions?limit=20
+curl http://127.0.0.1:8000/api/actions/latest
+curl http://127.0.0.1:8000/api/recommendations/latest
+curl http://127.0.0.1:8000/api/containers
+curl http://127.0.0.1:8000/api/state
+curl -X POST http://127.0.0.1:8000/api/actions/<action_id>/apply
+curl -X POST http://127.0.0.1:8000/api/containers/<container_name>/policy \
+  -H "Content-Type: application/json" \
+  -d "{\"policy\":\"advisory\"}"
+curl -X POST http://127.0.0.1:8000/api/state/autopilot \
+  -H "Content-Type: application/json" \
+  -d "{\"enabled\":false}"
+```
+
+The dashboard should read from these endpoints instead of parsing
+`logs/actions.jsonl` directly. The JSONL file remains the operator-visible audit
+trail.
+
+Dashboard policy changes are stored as runtime overrides in
+`logs/policy_overrides.json`. Docker `skip` labels still win over dashboard
+overrides, so explicitly skipped containers remain protected.
+
+The dashboard's Auto Resource Optimization toggle is the global autopilot kill
+switch stored in `logs/global_state.json`. When it is off, containers whose
+effective policy is `auto` still produce recommendations, but the agent does not
+run `docker update`.
+
+## Slack Notifications
+
+Non-developer users can connect Slack from the dashboard. Paste the incoming
+webhook URL into the Slack notification box, click Save, then click Test. The
+dashboard stores this local runtime setting in `logs/settings.json`, which is
+ignored by git.
+
+Developers can also set `SLACK_WEBHOOK_URL` as an environment variable:
+
+```bash
+export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+```
+
+Dashboard settings take priority over the environment variable when both are
+present.
+
+Notified statuses are:
+
+- `recommended`
+- `applied`
+- `failed`
+- `policy_updated`
+- `autopilot_updated`
+
+Every notification attempt is also written to `logs/notifications.jsonl`. If no
+webhook URL is configured, Chost Hunter records the notification as `disabled`
+there, which makes local verification possible without a real Slack workspace.

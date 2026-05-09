@@ -12,6 +12,7 @@ CPU quota 변환:
 import docker
 
 from ai import config
+from ai.agent.policy_store import get_policy_override
 
 
 CPU_PERIOD_DEFAULT = 100000   # Docker 기본 CPU period (us)
@@ -53,11 +54,7 @@ def update_limits(container_name: str, cpu_quota: float, memory_bytes: int) -> d
     client = get_client()
     container = client.containers.get(container_name)
 
-    host_config = container.attrs["HostConfig"]
-    prev = {
-        "cpu_quota": host_config.get("CpuQuota", 0),     # 0 = unlimited
-        "memory_bytes": host_config.get("Memory", 0),    # 0 = unlimited
-    }
+    prev = _extract_limits(container)
 
     new_cpu_quota = int(cpu_quota * CPU_PERIOD_DEFAULT)
     # memswap을 mem_limit과 같게 설정해야 Docker가 거부하지 않음
@@ -68,6 +65,33 @@ def update_limits(container_name: str, cpu_quota: float, memory_bytes: int) -> d
         memswap_limit=memory_bytes,
     )
     return prev
+
+
+def get_container_limits(container_name: str) -> dict:
+    """
+    Return the container's current Docker resource limits.
+
+    Docker uses 0 for an unlimited CPU quota or memory limit. The policy layer
+    treats unlabeled unlimited containers conservatively because the operator may
+    have left them unlimited on purpose.
+    """
+    client = get_client()
+    container = client.containers.get(container_name)
+    return _extract_limits(container)
+
+
+def _extract_limits(container) -> dict:
+    """Extract current limit values from Docker's HostConfig."""
+    host_config = container.attrs["HostConfig"]
+    return {
+        "cpu_quota": host_config.get("CpuQuota", 0),
+        "memory_bytes": host_config.get("Memory", 0),
+    }
+
+
+def _has_unlimited_limit(limits: dict) -> bool:
+    """Docker limit value 0 means unlimited; either unlimited dimension is risky."""
+    return limits.get("cpu_quota", 0) <= 0 or limits.get("memory_bytes", 0) <= 0
 
 
 def rollback_limits(container_name: str, prev: dict) -> None:
@@ -127,12 +151,91 @@ def get_current_usage(container_name: str) -> dict:
     return {"cpu_pct": cpu_pct, "mem_pct": mem_pct}
 
 
+def _resolve_policy(container, limits: dict | None = None) -> str:
+    """
+    컨테이너 라벨을 보고 적용할 정책(auto/advisory/skip)을 결정한다.
+
+    우선순위:
+    1. chost-hunter.skip=true → "skip"
+    2. chost-hunter.policy=<value> → 해당 값 (skip/advisory/auto)
+    3. 라벨 없음 → config.DEFAULT_POLICY
+    잘못된 값은 안전한 advisory로 강등.
+    """
+    labels = container.labels or {}
+    skip_flag = labels.get(f"{config.LABEL_PREFIX}.skip", "").strip().lower()
+    if skip_flag == "true":
+        return "skip"
+
+    policy = labels.get(f"{config.LABEL_PREFIX}.policy", "").strip().lower()
+    if policy == "skip":
+        return "skip"
+
+    override = get_policy_override(container.name)
+    if override is not None:
+        return override
+
+    if policy in ("skip", "advisory", "auto"):
+        return policy
+    if policy:
+        # 알 수 없는 값이 들어오면 운영자 의도를 알 수 없으므로 안전하게 advisory
+        print(f"[policy] unknown policy '{policy}' on {container.name}, falling back to advisory")
+        return "advisory"
+    if limits is None:
+        limits = _extract_limits(container)
+    if config.ADVISORY_FOR_UNLABELED_UNLIMITED and _has_unlimited_limit(limits):
+        print(f"[policy] {container.name}: unlimited container without label -> advisory")
+        return "advisory"
+
+    return config.DEFAULT_POLICY
+
+
+def list_managed_containers(
+    infra_exclude: list[str] = None,
+    include_skipped: bool = False,
+) -> list[dict]:
+    """
+    감시 대상 컨테이너와 정책을 함께 반환한다.
+
+    Returns:
+        [{"name": str, "policy": "auto" | "advisory"}, ...]
+        skip 정책 컨테이너는 결과에 포함되지 않는다.
+
+    인프라 컨테이너(라벨을 못 거는 외부 이미지)는 infra_exclude로 차단한다.
+    """
+    if infra_exclude is None:
+        infra_exclude = config.INFRA_CONTAINER_NAMES
+    client = get_client()
+    result = []
+    for c in client.containers.list():
+        if c.name in infra_exclude:
+            continue
+        limits = _extract_limits(c)
+        policy = _resolve_policy(c, limits)
+        policy_source = "override" if get_policy_override(c.name) == policy else "label-or-default"
+        if policy == "skip":
+            print(f"[infer][skip] {c.name}: skipped by policy")
+            if include_skipped:
+                result.append({
+                    "name": c.name,
+                    "policy": policy,
+                    "policy_source": policy_source,
+                    "limits": limits,
+                })
+            continue
+        result.append({
+            "name": c.name,
+            "policy": policy,
+            "policy_source": policy_source,
+            "limits": limits,
+        })
+    return result
+
+
 def list_target_containers(exclude: list[str] = None) -> list[str]:
     """
-    감시 대상 컨테이너 이름 목록을 반환한다.
-    인프라(cAdvisor, Prometheus, Grafana, ai-agent 등)는 제외한다.
+    하위 호환용. 새 코드는 list_managed_containers()를 사용할 것.
+    advisory 컨테이너도 이름은 반환되지만 정책 정보는 사라진다.
     """
     if exclude is None:
-        exclude = ["cadvisor", "prometheus", "grafana", "ai-agent"]
-    client = get_client()
-    return [c.name for c in client.containers.list() if c.name not in exclude]
+        exclude = config.INFRA_CONTAINER_NAMES
+    return [c["name"] for c in list_managed_containers(exclude)]

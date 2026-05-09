@@ -21,7 +21,10 @@ import time
 import traceback
 
 from ai import config
-from ai.agent.controller import list_target_containers, update_limits
+from ai.agent.action_log import record_action
+from ai.agent.api import start_api_server
+from ai.agent.controller import list_managed_containers, update_limits
+from ai.agent.global_state import is_autopilot_enabled
 from ai.agent.predictor import (
     inverse_scale,
     load_pretrained,
@@ -34,20 +37,109 @@ from ai.data.loader import fetch_container_window
 
 def run_inference_cycle(model, watchdog: Watchdog) -> None:
     """추론 1 사이클: 대상 컨테이너 전체 처리."""
-    for name in list_target_containers():
+    for target in list_managed_containers(include_skipped=True):
+        name = target["name"]
+        policy = target["policy"]
+        current_limits = target.get("limits")
         try:
+            if policy == "skip":
+                record_action(
+                    container_name=name,
+                    policy=policy,
+                    status="skipped",
+                    current_limits=current_limits,
+                    reason="container policy is skip",
+                )
+                continue
+
             window = fetch_container_window(name)
             pred_scaled = predict(model, window)
             pred = inverse_scale(pred_scaled)
             limits = recommend_limits(pred)
-            prev = update_limits(name, **limits)
+
+            if policy == "advisory":
+                record_action(
+                    container_name=name,
+                    policy=policy,
+                    status="recommended",
+                    current_limits=current_limits,
+                    recommended_limits=limits,
+                    reason="advisory policy; no docker update",
+                )
+                print(f"[infer][advisory] {name}: recommend "
+                      f"cpu={limits['cpu_quota']:.2f} "
+                      f"mem={limits['memory_bytes']} "
+                      f"(current={target.get('limits')}, no docker update)")
+                continue
+
+            if policy != "auto":
+                record_action(
+                    container_name=name,
+                    policy=policy,
+                    status="skipped",
+                    current_limits=current_limits,
+                    recommended_limits=limits,
+                    reason=f"unsupported policy '{policy}'",
+                )
+                print(f"[infer][skip] {name}: unsupported policy '{policy}'")
+                continue
+
+            if not is_autopilot_enabled():
+                record_action(
+                    container_name=name,
+                    policy=policy,
+                    status="recommended",
+                    current_limits=current_limits,
+                    recommended_limits=limits,
+                    reason="global autopilot disabled; no docker update",
+                )
+                print(f"[infer][autopilot-off] {name}: recommend "
+                      f"cpu={limits['cpu_quota']:.2f} "
+                      f"mem={limits['memory_bytes']} (no docker update)")
+                continue
+
+            prev = current_limits or {}
             watchdog.register(name, prev)
-            print(f"[infer] {name}: cpu={limits['cpu_quota']:.2f} "
+            try:
+                applied_prev = update_limits(name, **limits)
+            except Exception:
+                watchdog.unregister(name)
+                raise
+
+            if applied_prev != prev:
+                watchdog.register(name, applied_prev)
+                prev = applied_prev
+
+            print(f"[infer][auto] {name}: applied "
+                  f"cpu={limits['cpu_quota']:.2f} "
                   f"mem={limits['memory_bytes']} (prev={prev})")
+            record_action(
+                container_name=name,
+                policy=policy,
+                status="applied",
+                current_limits=current_limits,
+                recommended_limits=limits,
+                applied_limits=limits,
+                previous_limits=prev,
+            )
         except ValueError as e:
             # 데이터 부족 등 예상된 실패 - 다음 사이클에 다시 시도
+            record_action(
+                container_name=name,
+                policy=policy,
+                status="skipped",
+                current_limits=current_limits,
+                reason=str(e),
+            )
             print(f"[infer] skipped {name}: {e}")
-        except Exception:
+        except Exception as e:
+            record_action(
+                container_name=name,
+                policy=policy,
+                status="failed",
+                current_limits=current_limits,
+                error=str(e),
+            )
             print(f"[infer] error for {name}:")
             traceback.print_exc()
 
@@ -55,6 +147,11 @@ def run_inference_cycle(model, watchdog: Watchdog) -> None:
 def main():
     print("[boot] loading pretrained model...")
     model = load_pretrained()
+
+    api_server = None
+    if config.ENABLE_CONTROL_API:
+        print("[boot] starting control API...")
+        api_server = start_api_server(config.CONTROL_API_HOST, config.CONTROL_API_PORT)
 
     print("[boot] starting watchdog...")
     watchdog = Watchdog()
@@ -69,6 +166,9 @@ def main():
         print("[shutdown] interrupted")
     finally:
         watchdog.stop()
+        if api_server is not None:
+            api_server.shutdown()
+            api_server.server_close()
 
 
 if __name__ == "__main__":

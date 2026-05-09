@@ -3,6 +3,12 @@ AI 에이전트 설정값
 하이퍼파라미터, 임계값, 경로 등을 한곳에서 관리한다.
 """
 
+import os
+
+from ai.env import load_env_file
+
+load_env_file()
+
 # ── LSTM 모델 하이퍼파라미터 ──────────────────────────────
 WINDOW_SIZE = 60          # 입력 시계열 길이 (과거 60 step)
 PREDICT_HORIZON = 10      # 예측 길이 (미래 10 step)
@@ -44,6 +50,7 @@ ACTIVE_VM_MIN_CPU_STD = 1.0   # 또는 표준편차가 이 값 이상인 VM (둘
 # ── Online Learning (Fine-tuning) ────────────────────────
 FINETUNE_INTERVAL_SEC = 3600   # 1시간마다 fine-tune
 FINETUNE_EPOCHS = 5             # fine-tune 시 적은 epoch
+ENABLE_ONLINE_FINETUNE = False  # 기본 런타임 루프는 학습 없이 추론만 수행
 
 # ── 추론 설정 ─────────────────────────────────────────────
 # 데모용으로 짧게 설정. 운영에서는 학습 단위(5분)에 맞춰 INTERVAL=300, STEP=300 권장.
@@ -70,9 +77,53 @@ PROMETHEUS_URL = "http://localhost:9090"
 DOCKER_SOCKET = ""  # 비워두면 docker.from_env()로 자동 감지 (Windows: named pipe, Linux: unix socket).
 # 운영(Linux 서버)에서 명시 강제하려면 "unix://var/run/docker.sock" 사용.
 
+# ── Control API ───────────────────────────────────────────
+ENABLE_CONTROL_API = True
+CONTROL_API_HOST = "127.0.0.1"
+CONTROL_API_PORT = 8000
+
+# ── 컨테이너 라벨 정책 ─────────────────────────────────────
+# 운영자가 컨테이너에 라벨을 붙여 AI 동작을 제어할 수 있다.
+#
+#   chost-hunter.skip=true            → 완전 무시 (감시/적용 둘 다 X)
+#   chost-hunter.policy=skip          → skip=true와 동일
+#   chost-hunter.policy=advisory      → 권고만 출력, 실제 docker update X
+#   chost-hunter.policy=auto          → 자동 적용 (기본값)
+#   라벨 없음                          → DEFAULT_POLICY가 적용됨
+#
+# 신규 도입 시 안전을 위해 advisory를 기본으로 하고 검증 후 auto로 전환 가능.
+LABEL_PREFIX = "chost-hunter"
+DEFAULT_POLICY = "auto"  # "auto" | "advisory"
+ADVISORY_FOR_UNLABELED_UNLIMITED = True
+# DEFAULT_POLICY가 auto여도 cpu_quota=0 또는 memory=0인 라벨 없는 컨테이너는
+# advisory로 처리한다. 운영자가 명시적으로 chost-hunter.policy=auto를 붙인
+# 경우에만 AI가 unlimited 컨테이너에 최초 limit을 생성한다.
+
+# 인프라 컨테이너(우리가 띄운 모니터링 스택)는 항상 무시한다.
+# 라벨로 관리하기 어려운 외부 이미지(prom/grafana/cadvisor)를 위한 안전망.
+INFRA_CONTAINER_NAMES = ["cadvisor", "prometheus", "grafana", "ai-agent", "alertmanager"]
+
 # ── 경로 ──────────────────────────────────────────────────
 MODEL_DIR = "models"
 PRETRAINED_MODEL_PATH = f"{MODEL_DIR}/pretrained.pt"
 SCALER_PATH = f"{MODEL_DIR}/scaler.pkl"
 TRAINING_HISTORY_PATH = f"{MODEL_DIR}/training_history.json"
 TRAINING_CURVE_PATH = f"{MODEL_DIR}/training_curve.png"
+LOG_DIR = "logs"
+ACTION_LOG_PATH = f"{LOG_DIR}/actions.jsonl"
+POLICY_OVERRIDE_PATH = f"{LOG_DIR}/policy_overrides.json"
+GLOBAL_STATE_PATH = f"{LOG_DIR}/global_state.json"
+NOTIFICATION_LOG_PATH = f"{LOG_DIR}/notifications.jsonl"
+SETTINGS_PATH = f"{LOG_DIR}/settings.json"
+
+# ── Slack notifications ───────────────────────────────────
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
+SLACK_NOTIFY_ENABLED = os.getenv("SLACK_NOTIFY_ENABLED", "true").lower() == "true"
+SLACK_NOTIFY_STATUSES = {
+    "recommended",
+    "applied",
+    "failed",
+    "policy_updated",
+    "autopilot_updated",
+}
+SLACK_TIMEOUT_SEC = 5
