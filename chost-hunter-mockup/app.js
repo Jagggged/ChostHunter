@@ -255,6 +255,50 @@ async function setAutopilot(enabled) {
   await refreshRuntimePanels();
 }
 
+async function setFinetune(enabled) {
+  await fetchJson('/api/state/finetune', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled })
+  });
+  await refreshRuntimePanels();
+}
+
+async function saveFinetuneSettings() {
+  const button = document.getElementById('finetune-save-btn');
+  const feedback = document.getElementById('finetune-feedback');
+  const payload = {
+    interval_sec: Number(document.getElementById('finetune-interval').value),
+    initial_delay_sec: Number(document.getElementById('finetune-initial-delay').value),
+    history_sec: Number(document.getElementById('finetune-history').value),
+    max_containers: Number(document.getElementById('finetune-max-containers').value),
+    skip_cpu_threshold: Number(document.getElementById('finetune-cpu-skip').value),
+    skip_memory_threshold: Number(document.getElementById('finetune-memory-skip').value),
+    target_containers: document.getElementById('finetune-targets').value,
+    auto_promote: document.getElementById('finetune-auto-promote').checked
+  };
+
+  button.disabled = true;
+  feedback.className = 'feedback-line';
+  feedback.textContent = 'Saving';
+  try {
+    const response = await fetchJson('/api/settings/finetune', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    renderFinetuneSettings(response.settings || {});
+    feedback.className = 'feedback-line ok';
+    feedback.textContent = 'Saved';
+    await refreshRuntimePanels();
+  } catch (error) {
+    feedback.className = 'feedback-line error';
+    feedback.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function saveSlackSettings() {
   const input = document.getElementById('slack-webhook-input');
   const toggle = document.getElementById('toggle-slack');
@@ -461,9 +505,57 @@ function renderSlackSettings(slack) {
   input.placeholder = configured ? 'Replace Slack webhook URL' : 'Slack webhook URL';
 }
 
+function renderFinetuneState(state, latestRun) {
+  const toggle = document.getElementById('toggle-finetune');
+  const label = document.getElementById('finetune-label');
+  const desc = document.getElementById('finetune-desc');
+  const latest = document.getElementById('finetune-latest');
+  const enabled = Boolean(state.finetune_enabled);
+
+  toggle.checked = enabled;
+  if (enabled) {
+    label.className = 'label-on';
+    label.textContent = 'Fine-tuning: On';
+    desc.textContent = 'Scheduler can train candidate runtime models.';
+  } else {
+    label.className = 'label-off';
+    label.textContent = 'Fine-tuning: Off';
+    desc.textContent = 'Pretrained inference only.';
+  }
+
+  if (!latestRun) {
+    latest.textContent = 'Latest run: none';
+    return;
+  }
+  const status = latestRun.status || 'unknown';
+  const reason = latestRun.reason ? ` - ${latestRun.reason}` : '';
+  const samples = latestRun.samples != null ? ` (${latestRun.samples} samples)` : '';
+  latest.textContent = `Latest run: ${status}${samples}${reason}`;
+}
+
+function renderFinetuneSettings(settings) {
+  if (!settings || !Object.keys(settings).length) return;
+  document.getElementById('finetune-interval').value = settings.interval_sec ?? '';
+  document.getElementById('finetune-initial-delay').value = settings.initial_delay_sec ?? '';
+  document.getElementById('finetune-history').value = settings.history_sec ?? '';
+  document.getElementById('finetune-max-containers').value = settings.max_containers ?? '';
+  document.getElementById('finetune-cpu-skip').value = settings.skip_cpu_threshold ?? '';
+  document.getElementById('finetune-memory-skip').value = settings.skip_memory_threshold ?? '';
+  document.getElementById('finetune-targets').value = (settings.target_containers || []).join(', ');
+  document.getElementById('finetune-auto-promote').checked = Boolean(settings.auto_promote);
+}
+
 async function refreshRuntimePanels() {
   try {
-    const [actionsPayload, recommendationsPayload, containersPayload, statePayload, settingsPayload] = await Promise.all([
+    const [
+      actionsPayload,
+      recommendationsPayload,
+      containersPayload,
+      statePayload,
+      settingsPayload,
+      finetunePayload,
+      finetuneSettingsPayload
+    ] = await Promise.all([
       fetchJson('/api/actions?limit=12'),
       fetchJson('/api/recommendations/latest'),
       fetchJson('/api/containers'),
@@ -475,7 +567,9 @@ async function refreshRuntimePanels() {
           source: 'none',
           webhook_url_masked: ''
         }
-      })
+      }),
+      fetchJsonOptional('/api/finetune/latest', { run: null }),
+      fetchJsonOptional('/api/settings/finetune', { settings: null })
     ]);
     const actions = actionsPayload.actions || [];
     const recommendations = recommendationsPayload.recommendations || [];
@@ -485,6 +579,8 @@ async function refreshRuntimePanels() {
     updateSummary(actions, recommendations);
     renderAutopilotState(statePayload.state || {});
     renderSlackSettings((settingsPayload || {}).slack || {});
+    renderFinetuneState(statePayload.state || {}, (finetunePayload || {}).run);
+    renderFinetuneSettings((finetuneSettingsPayload || {}).settings || {});
   } catch (error) {
     document.getElementById('waste-list').innerHTML = `
       <div class="empty-state">
@@ -528,11 +624,25 @@ function setupSlackSettings() {
   toggle.addEventListener('change', saveSlackSettings);
 }
 
+function setupFinetuneToggle() {
+  const toggle = document.getElementById('toggle-finetune');
+  const saveButton = document.getElementById('finetune-save-btn');
+  toggle.addEventListener('change', event => {
+    const enabled = event.target.checked;
+    toggle.disabled = true;
+    setFinetune(enabled).finally(() => {
+      toggle.disabled = false;
+    });
+  });
+  saveButton.addEventListener('click', saveFinetuneSettings);
+}
+
 window.onload = () => {
   initCharts();
   initGauges();
   setupToggle();
   setupSlackSettings();
+  setupFinetuneToggle();
   refreshRuntimePanels();
   document.querySelector('.btn-refresh').addEventListener('click', refreshRuntimePanels);
 };

@@ -49,14 +49,10 @@ You can deploy the monitoring stack (cAdvisor, Prometheus, Grafana, and Alertman
 git clone [https://github.com/jagggged/chost-hunter.git](https://github.com/jagggged/chost-hunter.git)
 cd chost-hunter
 
-# 2. Configure environment variables
-cp .env.example .env
-# Edit .env with your Slack tokens and credentials
-
-# 3. Launch the monitoring stack
+# 2. Launch the monitoring stack
 docker-compose up -d
 
-# 4. Run the AI agent
+# 3. Run the AI agent locally only when developing outside Docker
 python -m ai.main
 ```
 
@@ -81,6 +77,61 @@ explicitly.
 The runtime loop performs inference only. Online fine-tuning is disabled by
 default (`ENABLE_ONLINE_FINETUNE = False`) so model training overhead cannot
 outweigh the resource savings during normal operation.
+
+To test runtime fine-tuning explicitly, set:
+
+```bash
+ENABLE_ONLINE_FINETUNE=true
+```
+
+It can also be switched at runtime from the prototype dashboard or through the
+Control API:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/state/finetune \
+  -H "Content-Type: application/json" \
+  -d "{\"enabled\":true}"
+```
+
+For short local demos, you can lower the sample threshold without changing the
+production default:
+
+```bash
+ENABLE_ONLINE_FINETUNE=true FINETUNE_MIN_SAMPLES=8 FINETUNE_EPOCHS=1
+```
+
+The Docker Compose file does not require a `.env` file. It defaults to the
+published GHCR agent image and pretrained inference mode:
+
+```bash
+curl -O https://raw.githubusercontent.com/jagggged/chost-hunter/develop/docker-compose.yml
+docker compose up -d
+```
+
+For local image verification before publishing:
+
+```bash
+docker build -t chost-hunter-agent:local .
+AI_AGENT_IMAGE=chost-hunter-agent:local docker compose up -d ai-agent
+```
+
+Recommendation output is conservatively capped after inference. By default,
+finite container limits are not increased above their current value
+(`MAX_LIMIT_INCREASE_RATIO=1.0`), and absolute caps prevent runaway predictions
+from becoming huge Docker limits (`MAX_CPU_QUOTA=4.0`,
+`MAX_MEMORY_BYTES=2147483648`).
+
+When enabled, the agent keeps `models/pretrained.pt` as the master model,
+creates `models/runtime/active.pt` for runtime inference, and trains candidate
+models from recent Prometheus samples. A candidate is promoted only when its
+validation loss is no worse than the current active model and the run stays
+within the configured duration budget. Fine-tuning run history is written to
+`logs/finetune_runs.jsonl` and exposed through:
+
+```bash
+curl http://127.0.0.1:8000/api/finetune/latest
+curl http://127.0.0.1:8000/api/finetune/runs?limit=20
+```
 
 ## Action Log
 

@@ -136,6 +136,56 @@
               </select>
             </div>
 
+            <div class="runtime-setting">
+              <div class="notification-header">
+                <div>
+                  <span id="finetune-label" class="label-off">Fine-tuning: Off</span>
+                  <p id="finetune-desc" class="desc">Pretrained inference only.</p>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggle-finetune">
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              <div id="finetune-latest" class="runtime-line">Latest run: none</div>
+              <div class="finetune-form">
+                <label>
+                  <span>Interval</span>
+                  <input type="number" id="finetune-interval" min="1" step="1">
+                </label>
+                <label>
+                  <span>Initial Delay</span>
+                  <input type="number" id="finetune-initial-delay" min="0" step="1">
+                </label>
+                <label>
+                  <span>History</span>
+                  <input type="number" id="finetune-history" min="1" step="1">
+                </label>
+                <label>
+                  <span>Max Containers</span>
+                  <input type="number" id="finetune-max-containers" min="0" step="1">
+                </label>
+                <label>
+                  <span>CPU Skip</span>
+                  <input type="number" id="finetune-cpu-skip" min="0" step="0.01">
+                </label>
+                <label>
+                  <span>Memory Skip</span>
+                  <input type="number" id="finetune-memory-skip" min="0" step="0.01">
+                </label>
+                <label class="finetune-wide">
+                  <span>Targets</span>
+                  <input type="text" id="finetune-targets" placeholder="container-a, container-b">
+                </label>
+                <label class="checkbox-line">
+                  <input type="checkbox" id="finetune-auto-promote">
+                  <span>Auto promote</span>
+                </label>
+                <button class="action-btn" id="finetune-save-btn">Save</button>
+              </div>
+              <div id="finetune-feedback" class="feedback-line"></div>
+            </div>
+
             <div class="notification-setting">
               <div class="notification-header">
                 <div>

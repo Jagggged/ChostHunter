@@ -25,6 +25,11 @@ MEM_COL = "Memory usage [KB]"
 FEATURE_COLS = [CPU_COL, MEM_COL]
 
 
+def prometheus_rate_window(step_sec: int) -> str:
+    """Return a rate() window wide enough for at least two Prometheus samples."""
+    return f"{max(step_sec * 2, 30)}s"
+
+
 def load_csv(path: str) -> pd.DataFrame:
     """
     Bitbrain CSV 한 개를 DataFrame으로 로드한다.
@@ -319,7 +324,7 @@ def fetch_container_window(
     """
     end = time.time()
     start = end - window_size * step_sec
-    rate_window = f"{step_sec}s"   # rate() 윈도우는 step과 같게
+    rate_window = prometheus_rate_window(step_sec)
 
     cpu_query = (
         f'rate(container_cpu_usage_seconds_total'
@@ -355,6 +360,6 @@ def fetch_container_window(
 
     # 학습 시 사용한 스케일러로 동일 변환
     scaler = load_scaler()
-    scaled = scaler.transform(df[FEATURE_COLS].values)
+    scaled = scaler.transform(df[FEATURE_COLS])
 
     return scaled.reshape(1, window_size, len(FEATURE_COLS)).astype(np.float32)
