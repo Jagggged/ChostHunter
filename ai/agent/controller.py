@@ -246,6 +246,10 @@ def _resolve_policy(container, limits: dict | None = None) -> str:
     잘못된 값은 안전한 advisory로 강등.
     """
     labels = container.labels or {}
+    override = get_policy_override(container.name)
+    if override is not None:
+        return override
+
     skip_flag = labels.get(f"{config.LABEL_PREFIX}.skip", "").strip().lower()
     if skip_flag == "true":
         return "skip"
@@ -253,10 +257,6 @@ def _resolve_policy(container, limits: dict | None = None) -> str:
     policy = labels.get(f"{config.LABEL_PREFIX}.policy", "").strip().lower()
     if policy == "skip":
         return "skip"
-
-    override = get_policy_override(container.name)
-    if override is not None:
-        return override
 
     if policy in ("skip", "advisory", "auto"):
         return policy

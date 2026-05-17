@@ -175,5 +175,8 @@ SLACK_NOTIFY_STATUSES = {
     "autopilot_updated",
     "finetune_updated",
     "finetune_settings_updated",
+    "notification_test",
+    "rollback_failed",
+    "rolled_back",
 }
 SLACK_TIMEOUT_SEC = 5

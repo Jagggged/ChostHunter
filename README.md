@@ -99,6 +99,17 @@ docker compose logs --tail=50
 | Username | `admin` |
 | Password | `admin` |
 
+The provisioned Grafana dashboard includes the Chost Hunter AI panel plugin on
+the right side. The plugin calls the AI Agent Control API directly and exposes:
+
+- latest recommendations
+- manual Apply
+- per-container policy selector
+- Autopilot toggle
+- fine-tuning state/settings
+- Slack notification settings
+- recent action history
+
 ---
 
 ## Runtime Control Policy
@@ -243,8 +254,9 @@ The dashboard should read from these endpoints instead of parsing
 trail.
 
 Dashboard policy changes are stored as runtime overrides in
-`logs/policy_overrides.json`. Docker `skip` labels still win over dashboard
-overrides, so explicitly skipped containers remain protected.
+`logs/policy_overrides.json`. Runtime overrides take precedence over Docker
+policy labels so operators can move a container between auto, advisory, and skip
+from the dashboard during a demo or live run.
 
 The dashboard's Auto Resource Optimization toggle is the global autopilot kill
 switch stored in `logs/global_state.json`. When it is off, containers whose
