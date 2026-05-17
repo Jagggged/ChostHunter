@@ -175,3 +175,48 @@ def test_rollback_limits_uses_negative_one_to_restore_unlimited(monkeypatch):
         "mem_limit": -1,
         "memswap_limit": -1,
     }]
+
+
+def test_rollback_limits_restores_nano_cpus(monkeypatch):
+    container = FakeContainer(cpu_quota=0, memory_bytes=128 * 1024 * 1024)
+    container.attrs["HostConfig"]["NanoCpus"] = 500_000_000
+
+    class FakeAPI:
+        def __init__(self):
+            self.calls = []
+
+        def _url(self, pathfmt, *args):
+            return pathfmt.format(*args)
+
+        def _post_json(self, url, data, **kwargs):
+            self.calls.append({"url": url, "data": data})
+            return SimpleNamespace()
+
+        def _raise_for_status(self, response):
+            return None
+
+    fake_api = FakeAPI()
+    fake_client = SimpleNamespace(
+        api=fake_api,
+        containers=SimpleNamespace(get=lambda name: container),
+    )
+    monkeypatch.setattr(controller, "get_client", lambda: fake_client)
+
+    controller.rollback_limits(
+        "app",
+        {
+            "cpu_quota": 100000,
+            "memory_bytes": 256 * 1024 * 1024,
+            "nano_cpus": 1_000_000_000,
+        },
+    )
+
+    assert container.update_calls == []
+    assert fake_api.calls == [{
+        "url": "/containers/fake-container-id/update",
+        "data": {
+            "NanoCpus": 1_000_000_000,
+            "Memory": 256 * 1024 * 1024,
+            "MemorySwap": 256 * 1024 * 1024,
+        },
+    }]

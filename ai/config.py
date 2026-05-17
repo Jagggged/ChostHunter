@@ -113,8 +113,8 @@ CPU_QUOTA_STEP = _env_float("CPU_QUOTA_STEP", 0.01)
 MEMORY_STEP_BYTES = _env_int("MEMORY_STEP_BYTES", 16 * 1024 * 1024)
 
 # ── Watchdog (비상 롤백) ──────────────────────────────────
-WATCHDOG_INTERVAL_SEC = 1       # 1초마다 사용률 체크
-WATCHDOG_THRESHOLD = 0.90       # 사용률 90% 초과 시 롤백
+WATCHDOG_INTERVAL_SEC = _env_float("WATCHDOG_INTERVAL_SEC", 1.0)
+WATCHDOG_THRESHOLD = _env_float("WATCHDOG_THRESHOLD", 0.90)
 
 # ── 외부 연동 ─────────────────────────────────────────────
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://localhost:9090")
@@ -175,5 +175,7 @@ SLACK_NOTIFY_STATUSES = {
     "autopilot_updated",
     "finetune_updated",
     "finetune_settings_updated",
+    "rolled_back",
+    "rollback_failed",
 }
 SLACK_TIMEOUT_SEC = 5
