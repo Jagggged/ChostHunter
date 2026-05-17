@@ -1,42 +1,36 @@
-"""
-Watchdog: 비상 롤백 메커니즘
+"""Watchdog rollback loop for unsafe resource-limit updates."""
 
-AI가 자원을 줄였는데 갑자기 부하가 튀면(Spike) 컨테이너가 죽을 수 있다.
-별도 스레드로 1초마다 사용률을 감시하다가 임계치(90%) 초과 시
-AI 판단을 무시하고 즉시 이전 limit으로 복구한다.
-
-Prometheus 경유는 5초 지연이 있어 부적합. Docker stats로 직접 읽는다.
-"""
+from __future__ import annotations
 
 import threading
 import time
 
 from ai import config
+from ai.agent.action_log import record_action
 from ai.agent.controller import get_current_usage, rollback_limits
 
 
 class Watchdog:
-    """비상 롤백 감시 스레드"""
+    """Monitor recently updated containers and restore previous limits on spikes."""
 
     def __init__(self):
-        # 컨테이너별 직전 limit 보관 (롤백 시 사용)
         self._previous_limits: dict[str, dict] = {}
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
     def register(self, container_name: str, prev_limits: dict) -> None:
-        """AI가 limit을 변경하기 직전에 호출하여 롤백 대상으로 등록한다."""
+        """Track a container's previous limits for a possible rollback."""
         with self._lock:
             self._previous_limits[container_name] = prev_limits
 
     def unregister(self, container_name: str) -> None:
-        """롤백 후 또는 컨테이너 제거 시 감시 대상에서 빼낸다."""
+        """Remove a container from rollback tracking."""
         with self._lock:
             self._previous_limits.pop(container_name, None)
 
     def start(self) -> None:
-        """감시 스레드 시작 (이미 돌고 있으면 무시)."""
+        """Start the watchdog thread if it is not already running."""
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop_event.clear()
@@ -44,36 +38,67 @@ class Watchdog:
         self._thread.start()
 
     def stop(self) -> None:
-        """감시 스레드 종료를 요청한다 (다음 sleep 후 종료)."""
+        """Request watchdog shutdown and wait briefly for the thread."""
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
 
     def _watch_loop(self) -> None:
-        """주기적으로 등록된 컨테이너의 사용률을 체크하고 임계치 초과 시 롤백."""
+        """Periodically check tracked containers and roll back unsafe limits."""
         while not self._stop_event.is_set():
-            # 반복 중 register/unregister와 충돌하지 않도록 스냅샷
             with self._lock:
                 snapshot = dict(self._previous_limits)
 
             for name, prev in snapshot.items():
-                try:
-                    usage = get_current_usage(name)
-                except Exception as e:
-                    # 컨테이너가 사라졌거나 일시적 실패 - 다음 사이클에 다시 시도
-                    print(f"[watchdog] usage error for {name}: {e}")
-                    continue
-
-                if (usage["cpu_pct"] > config.WATCHDOG_THRESHOLD
-                        or usage["mem_pct"] > config.WATCHDOG_THRESHOLD):
-                    print(f"[watchdog] ROLLBACK {name}: cpu={usage['cpu_pct']:.2f} "
-                          f"mem={usage['mem_pct']:.2f}")
-                    try:
-                        rollback_limits(name, prev)
-                    except Exception as e:
-                        print(f"[watchdog] rollback error for {name}: {e}")
-                    finally:
-                        # 한 번 롤백한 컨테이너는 다시 AI가 limit을 정해야 하므로 등록 해제
-                        self.unregister(name)
+                if self._check_and_rollback(name, prev):
+                    self.unregister(name)
 
             time.sleep(config.WATCHDOG_INTERVAL_SEC)
+
+    def _check_and_rollback(self, name: str, prev: dict) -> bool:
+        """Return True when the container should be removed from tracking."""
+        try:
+            usage = get_current_usage(name)
+        except Exception as e:
+            print(f"[watchdog] usage error for {name}: {e}")
+            return False
+
+        if not _exceeds_threshold(usage):
+            return False
+
+        reason = (
+            "watchdog threshold exceeded: "
+            f"cpu={usage['cpu_pct']:.2f}, memory={usage['mem_pct']:.2f}"
+        )
+        print(f"[watchdog] ROLLBACK {name}: cpu={usage['cpu_pct']:.2f} "
+              f"mem={usage['mem_pct']:.2f}")
+        try:
+            rollback_limits(name, prev)
+        except Exception as e:
+            print(f"[watchdog] rollback error for {name}: {e}")
+            record_action(
+                container_name=name,
+                policy="watchdog",
+                status="rollback_failed",
+                previous_limits=prev,
+                reason=reason,
+                error=str(e),
+            )
+            return True
+
+        record_action(
+            container_name=name,
+            policy="watchdog",
+            status="rolled_back",
+            applied_limits=prev,
+            previous_limits=prev,
+            reason=reason,
+        )
+        return True
+
+
+def _exceeds_threshold(usage: dict) -> bool:
+    return (
+        usage["cpu_pct"] > config.WATCHDOG_THRESHOLD
+        or usage["mem_pct"] > config.WATCHDOG_THRESHOLD
+    )

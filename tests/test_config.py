@@ -65,3 +65,17 @@ def test_inference_window_settings_can_be_overridden_from_env(monkeypatch):
     monkeypatch.delenv("INFERENCE_STEP_SEC", raising=False)
     monkeypatch.delenv("INFERENCE_INTERVAL_SEC", raising=False)
     importlib.reload(config_module)
+
+
+def test_watchdog_settings_can_be_overridden_from_env(monkeypatch):
+    monkeypatch.setenv("WATCHDOG_INTERVAL_SEC", "0.2")
+    monkeypatch.setenv("WATCHDOG_THRESHOLD", "0.5")
+
+    config = importlib.reload(config_module)
+
+    assert config.WATCHDOG_INTERVAL_SEC == 0.2
+    assert config.WATCHDOG_THRESHOLD == 0.5
+
+    monkeypatch.delenv("WATCHDOG_INTERVAL_SEC", raising=False)
+    monkeypatch.delenv("WATCHDOG_THRESHOLD", raising=False)
+    importlib.reload(config_module)
