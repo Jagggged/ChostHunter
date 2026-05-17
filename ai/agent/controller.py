@@ -191,10 +191,20 @@ def rollback_limits(container_name: str, prev: dict) -> None:
 
     prev_cpu = prev.get("cpu_quota", 0)
     prev_mem = prev.get("memory_bytes", 0)
+    prev_nano_cpus = int(prev.get("nano_cpus", 0) or 0)
 
     # 0(unlimited)이면 -1로 변환해서 Docker에게 "제한 해제"를 명시
     cpu_quota = prev_cpu if prev_cpu > 0 else -1
     mem_limit = prev_mem if prev_mem > 0 else -1
+
+    if prev_nano_cpus > 0:
+        _update_nano_cpu_limits(
+            client,
+            container,
+            nano_cpus=prev_nano_cpus,
+            memory_bytes=mem_limit,
+        )
+        return
 
     container.update(
         cpu_quota=cpu_quota,
