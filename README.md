@@ -4,61 +4,110 @@
 
 **Chost Hunter** is an AIOps-based resource optimization solution designed to identify idle or over-provisioned Docker containers and safely right-size their CPU and memory limits using time-series predictions.
 
+---
+
 ## 🌟 Key Features
 
-* **🔍 AI-Powered Prediction**: Goes beyond static thresholds by using an **LSTM** model to analyze time-series metric patterns and estimate future CPU/memory demand.
-* **🛡️ Safety First (Rollback)**: Before applying a tighter resource limit, the agent records the previous limits and uses a watchdog to roll back if usage crosses the safety threshold.
-* **🤖 Automated Lifecycle**: A seamless end-to-end pipeline: Monitoring ⮕ Prediction ⮕ Recommendation ⮕ Policy Check ⮕ Resource Update.
-* **Standard Tech Stack**: Built on industry-standard open-source tools including cAdvisor, Prometheus, Grafana, and Docker SDK for high reliability and portability.
+| Feature | Description |
+|---|---|
+| 🔍 AI-Powered Prediction | Uses an LSTM model to estimate future CPU and memory demand from time-series metrics |
+| 🛡️ Safe Rollback Mechanism | Automatically restores previous limits if instability is detected |
+| 🤖 Automated Optimization | Monitoring ⮕ Prediction ⮕ Recommendation ⮕ Policy Check ⮕ Resource Update |
+| 📦 One-Command Deployment | Deploy the full stack using Docker Compose without cloning the repository |
+
+---
 
 ## 🏗️ System Architecture
 
-This diagram illustrates the comprehensive workflow of Chost Hunter, from metric collection to AI analysis and safe resource right-sizing.
-
 ![Chost Hunter System Diagram](images/system_diagram.png)
 
-### Detailed Workflow
+### Workflow
 
-1.  **Observability**: `cAdvisor` extracts real-time resource data from managed service containers.
-2.  **Collection & Storage**: `Prometheus TSDB` scrapes metrics via Port 8080 and stores them as time-series data.
-3.  **Visualization**: `Grafana Dashboard` visualizes the data, allowing operators to monitor the entire infrastructure at a glance.
-4.  **AIOps Analysis**: The `AI Agent` fetches data via PromQL (Port 9090) and processes it through an LSTM model.
-5.  **Recommendation**: The system converts predicted peak usage into CPU and memory limit recommendations with a safety buffer and minimum floors.
-6.  **Policy & Notification**: Container labels and dashboard overrides decide whether the recommendation is advisory, automatically applied, or skipped. Important decisions can be sent to **Slack** via Webhook.
-7.  **Safe Execution**: The `Executor` interacts with the **Docker Host Engine** to perform:
-    * **Phase 1**: Register the previous limits with the watchdog for rollback.
-    * **Phase 2**: Apply the recommended `cpu_quota` and `mem_limit` with `docker update`.
+| Step | Description |
+|---|---|
+| 1 | `cAdvisor` collects real-time container metrics |
+| 2 | `Prometheus` stores time-series metrics |
+| 3 | `Grafana` visualizes infrastructure metrics |
+| 4 | The `AI Agent` performs LSTM inference using Prometheus metrics |
+| 5 | The agent recommends or applies optimized Docker resource limits |
+| 6 | The watchdog restores previous limits if instability is detected |
+
+---
 
 ## 🛠️ Technology Stack
 
-* **Infrastructure**: Linux / Docker Host Engine
-* **Monitoring & Storage**: Prometheus, cAdvisor
-* **Visualization**: Grafana
-* **Analysis & Execution Agent**:
-    * **Language**: Python 3.9+
-    * **AI/ML**: Scikit-learn, PyTorch, Pandas
-    * **Control**: Docker SDK for Python
-* **Collaboration**: Slack (Outgoing Webhook)
+| Category | Technologies |
+|---|---|
+| Infrastructure | Docker |
+| Monitoring | Prometheus, cAdvisor |
+| Visualization | Grafana |
+| AI/ML | PyTorch, Scikit-learn |
+| Backend | Python 3.11 |
+| Container Control | Docker SDK for Python |
 
-## 🚀 Getting Started
+---
 
-You can deploy the monitoring stack (cAdvisor, Prometheus, Grafana, and Alertmanager) using `docker-compose`, then run the AI agent from the repository root.
+## 🚀 Quick Start
+
+Deploy the full Chost Hunter stack without cloning the repository.
+
+### 1. Download the Docker Compose file
 
 ```bash
-# 1. Clone the repository
-git clone [https://github.com/jagggged/chost-hunter.git](https://github.com/jagggged/chost-hunter.git)
-cd chost-hunter
-
-# 2. Launch the monitoring stack
-docker-compose up -d
-
-# 3. Run the AI agent locally only when developing outside Docker
-python -m ai.main
+curl -O https://raw.githubusercontent.com/jagggged/chost-hunter/main/docker-compose.yml
 ```
+
+### 2. Launch Chost Hunter
+
+```bash
+docker compose up -d
+```
+
+Docker Compose automatically downloads and starts:
+
+| Service |
+|---|
+| AI Agent |
+| Prometheus |
+| Grafana |
+| cAdvisor |
+| Alertmanager |
+
+### 3. Verify deployment
+
+```bash
+docker compose ps
+docker compose logs --tail=50
+```
+
+---
+
+## 🌐 Service Endpoints
+
+| Service | URL |
+|---|---|
+| Grafana | http://localhost:3000 |
+| Prometheus | http://localhost:9090 |
+| Alertmanager | http://localhost:9093 |
+| cAdvisor | http://localhost:8080 |
+| AI Agent API | http://localhost:8000 |
+
+### Grafana Default Credentials
+
+| Field | Value |
+|---|---|
+| Username | `admin` |
+| Password | `admin` |
+
+---
 
 ## Runtime Control Policy
 
-The AI agent supports three container policies through Docker labels:
+| Label | Description |
+|---|---|
+| `chost-hunter.policy=auto` | Automatically apply AI recommendations |
+| `chost-hunter.policy=advisory` | Show recommendations only |
+| `chost-hunter.skip=true` | Ignore the container completely |
 
 ```yaml
 labels:
@@ -73,6 +122,16 @@ If a container has no Chost Hunter label and either `CpuQuota` or `Memory` is
 may have intentionally left a critical service unlimited. To let the AI create
 the first limit for an unlimited container, add `chost-hunter.policy=auto`
 explicitly.
+
+Recommendation output is conservatively capped after inference. By default,
+finite container limits are not increased above their current value
+(`MAX_LIMIT_INCREASE_RATIO=1.0`), and absolute caps prevent runaway predictions
+from becoming huge Docker limits (`MAX_CPU_QUOTA=4.0`,
+`MAX_MEMORY_BYTES=2147483648`).
+
+---
+
+## Runtime Fine-tuning
 
 The runtime loop performs inference only. Online fine-tuning is disabled by
 default (`ENABLE_ONLINE_FINETUNE = False`) so model training overhead cannot
@@ -101,12 +160,8 @@ ENABLE_ONLINE_FINETUNE=true FINETUNE_MIN_SAMPLES=8 FINETUNE_EPOCHS=1
 ```
 
 The Docker Compose file does not require a `.env` file. It defaults to the
-published GHCR agent image and pretrained inference mode:
-
-```bash
-curl -O https://raw.githubusercontent.com/jagggged/chost-hunter/develop/docker-compose.yml
-docker compose up -d
-```
+published GHCR agent image and pretrained inference mode, so the Quick Start
+commands above are enough for normal deployment.
 
 For local image verification before publishing:
 
@@ -114,12 +169,6 @@ For local image verification before publishing:
 docker build -t chost-hunter-agent:local .
 AI_AGENT_IMAGE=chost-hunter-agent:local docker compose up -d ai-agent
 ```
-
-Recommendation output is conservatively capped after inference. By default,
-finite container limits are not increased above their current value
-(`MAX_LIMIT_INCREASE_RATIO=1.0`), and absolute caps prevent runaway predictions
-from becoming huge Docker limits (`MAX_CPU_QUOTA=4.0`,
-`MAX_MEMORY_BYTES=2147483648`).
 
 When enabled, the agent keeps `models/pretrained.pt` as the master model,
 creates `models/runtime/active.pt` for runtime inference, and trains candidate
@@ -132,6 +181,17 @@ within the configured duration budget. Fine-tuning run history is written to
 curl http://127.0.0.1:8000/api/finetune/latest
 curl http://127.0.0.1:8000/api/finetune/runs?limit=20
 ```
+
+Fine-tuning settings can also be inspected and updated through:
+
+```bash
+curl http://127.0.0.1:8000/api/settings/finetune
+curl -X POST http://127.0.0.1:8000/api/settings/finetune \
+  -H "Content-Type: application/json" \
+  -d "{\"interval_sec\":21600,\"initial_delay_sec\":300,\"auto_promote\":true}"
+```
+
+---
 
 ## Action Log
 
@@ -151,12 +211,22 @@ Quick inspection:
 tail -n 5 logs/actions.jsonl
 ```
 
+---
+
 ## Control API
 
-When `ENABLE_CONTROL_API = True`, the AI agent starts a local API on
-`http://127.0.0.1:8000`.
-
-Useful endpoints:
+| Endpoint | Description |
+|---|---|
+| `/api/health` | Health check |
+| `/api/actions?limit=20` | Recent action log entries |
+| `/api/actions/latest` | Latest optimization action |
+| `/api/recommendations/latest` | Latest AI recommendation |
+| `/api/containers` | Managed container list |
+| `/api/state` | Global runtime state |
+| `/api/finetune/latest` | Latest runtime fine-tuning run |
+| `/api/finetune/runs?limit=20` | Runtime fine-tuning history |
+| `/api/settings/finetune` | Runtime fine-tuning settings |
+| `/api/settings/notifications` | Slack notification settings |
 
 ```bash
 curl http://127.0.0.1:8000/api/health
@@ -165,13 +235,7 @@ curl http://127.0.0.1:8000/api/actions/latest
 curl http://127.0.0.1:8000/api/recommendations/latest
 curl http://127.0.0.1:8000/api/containers
 curl http://127.0.0.1:8000/api/state
-curl -X POST http://127.0.0.1:8000/api/actions/<action_id>/apply
-curl -X POST http://127.0.0.1:8000/api/containers/<container_name>/policy \
-  -H "Content-Type: application/json" \
-  -d "{\"policy\":\"advisory\"}"
-curl -X POST http://127.0.0.1:8000/api/state/autopilot \
-  -H "Content-Type: application/json" \
-  -d "{\"enabled\":false}"
+curl http://127.0.0.1:8000/api/finetune/latest
 ```
 
 The dashboard should read from these endpoints instead of parsing
@@ -186,6 +250,8 @@ The dashboard's Auto Resource Optimization toggle is the global autopilot kill
 switch stored in `logs/global_state.json`. When it is off, containers whose
 effective policy is `auto` still produce recommendations, but the agent does not
 run `docker update`.
+
+---
 
 ## Slack Notifications
 
@@ -216,6 +282,8 @@ Notified statuses are:
 - `failed`
 - `policy_updated`
 - `autopilot_updated`
+- `finetune_updated`
+- `finetune_settings_updated`
 
 Every notification attempt is also written to `logs/notifications.jsonl`. If no
 webhook URL is configured, Chost Hunter records the notification as `disabled`
