@@ -251,3 +251,74 @@ def finetune(model_path: str, X: np.ndarray, y: np.ndarray) -> LightweightLSTM:
 
     torch.save(model.state_dict(), model_path)
     return model
+
+
+def evaluate_model_path(model_path: str, X: np.ndarray, y: np.ndarray) -> float:
+    """Evaluate a saved model state_dict on the provided dataset."""
+    device = get_device()
+    model = build_model().to(device)
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    loader = _make_dataloader(X, y, config.BATCH_SIZE, shuffle=False)
+    return _evaluate(model, loader, nn.MSELoss(), device)
+
+
+def finetune_to_path(
+    source_model_path: str,
+    output_model_path: str,
+    X: np.ndarray,
+    y: np.ndarray,
+    X_val: np.ndarray | None = None,
+    y_val: np.ndarray | None = None,
+    epochs: int | None = None,
+) -> dict:
+    """
+    Fine-tune a copy of source_model_path and save it to output_model_path.
+
+    The source model is never overwritten. This is used by the runtime
+    master/slave flow where the candidate model must pass validation before it
+    can become active.
+    """
+    device = get_device()
+    previous_threads = None
+    if config.FINETUNE_CPU_THREADS > 0:
+        previous_threads = torch.get_num_threads()
+        torch.set_num_threads(config.FINETUNE_CPU_THREADS)
+
+    try:
+        model = build_model().to(device)
+        model.load_state_dict(torch.load(source_model_path, map_location=device))
+
+        criterion = nn.MSELoss()
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=config.LEARNING_RATE,
+            weight_decay=config.WEIGHT_DECAY,
+        )
+        train_loader = _make_dataloader(X, y, config.BATCH_SIZE, shuffle=True)
+        val_loader = (
+            _make_dataloader(X_val, y_val, config.BATCH_SIZE, shuffle=False)
+            if X_val is not None and y_val is not None and len(X_val) > 0
+            else None
+        )
+
+        history = {"train_loss": [], "val_loss": []}
+        n_epochs = epochs if epochs is not None else config.FINETUNE_EPOCHS
+        for epoch in range(1, n_epochs + 1):
+            train_loss = _train_one_epoch(model, train_loader, criterion, optimizer, device)
+            val_loss = _evaluate(model, val_loader, criterion, device) if val_loader else None
+            history["train_loss"].append(train_loss)
+            history["val_loss"].append(val_loss)
+            msg = f"[finetune {epoch}/{n_epochs}] train_loss={train_loss:.6f}"
+            if val_loss is not None:
+                msg += f" val_loss={val_loss:.6f}"
+            print(msg)
+
+        os.makedirs(os.path.dirname(output_model_path), exist_ok=True)
+        tmp_path = f"{output_model_path}.tmp"
+        torch.save(model.state_dict(), tmp_path)
+        os.replace(tmp_path, output_model_path)
+        history["output_model_path"] = output_model_path
+        return history
+    finally:
+        if previous_threads is not None:
+            torch.set_num_threads(previous_threads)

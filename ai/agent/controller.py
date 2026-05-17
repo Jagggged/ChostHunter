@@ -58,6 +58,16 @@ def update_limits(container_name: str, cpu_quota: float, memory_bytes: int) -> d
     prev = _extract_limits(container)
 
     new_cpu_quota = int(cpu_quota * CPU_PERIOD_DEFAULT)
+    nano_cpus = _extract_nano_cpus(container)
+    if nano_cpus > 0:
+        _update_nano_cpu_limits(
+            client,
+            container,
+            nano_cpus=int(cpu_quota * 1_000_000_000),
+            memory_bytes=memory_bytes,
+        )
+        return prev
+
     # memswap을 mem_limit과 같게 설정해야 Docker가 거부하지 않음
     # (Docker 규칙: memswap_limit >= mem_limit 필수)
     container.update(
@@ -90,13 +100,77 @@ def container_exists(container_name: str) -> bool:
     return True
 
 
+def limits_already_applied(
+    current_limits: dict | None,
+    recommended_limits: dict,
+    cpu_tolerance: float = 0.005,
+    memory_tolerance_bytes: int = 1024 * 1024,
+) -> bool:
+    """Return whether a recommendation is close enough to the current limits."""
+    if not current_limits:
+        return False
+
+    current_cpu = _limits_cpu_cores(current_limits)
+    recommended_cpu = float(recommended_limits.get("cpu_quota", 0) or 0)
+    current_memory = int(current_limits.get("memory_bytes", 0) or 0)
+    recommended_memory = int(recommended_limits.get("memory_bytes", 0) or 0)
+
+    if current_cpu <= 0 or current_memory <= 0:
+        return False
+    return (
+        abs(current_cpu - recommended_cpu) <= cpu_tolerance
+        and abs(current_memory - recommended_memory) <= memory_tolerance_bytes
+    )
+
+
 def _extract_limits(container) -> dict:
     """Extract current limit values from Docker's HostConfig."""
     host_config = container.attrs["HostConfig"]
-    return {
-        "cpu_quota": host_config.get("CpuQuota", 0),
+    cpu_quota = host_config.get("CpuQuota", 0)
+    nano_cpus = host_config.get("NanoCpus", 0) or 0
+    if cpu_quota <= 0 and nano_cpus > 0:
+        cpu_quota = int((nano_cpus / 1_000_000_000) * CPU_PERIOD_DEFAULT)
+    limits = {
+        "cpu_quota": cpu_quota,
         "memory_bytes": host_config.get("Memory", 0),
     }
+    if nano_cpus > 0:
+        limits["nano_cpus"] = nano_cpus
+    return limits
+
+
+def _limits_cpu_cores(limits: dict) -> float:
+    nano_cpus = int(limits.get("nano_cpus", 0) or 0)
+    if nano_cpus > 0:
+        return nano_cpus / 1_000_000_000
+    cpu_quota = float(limits.get("cpu_quota", 0) or 0)
+    if cpu_quota > 0:
+        return cpu_quota / CPU_PERIOD_DEFAULT
+    return 0.0
+
+
+def _extract_nano_cpus(container) -> int:
+    """Return Docker NanoCpus when the container was created with --cpus."""
+    return int(container.attrs["HostConfig"].get("NanoCpus", 0) or 0)
+
+
+def _update_nano_cpu_limits(
+    client,
+    container,
+    *,
+    nano_cpus: int,
+    memory_bytes: int,
+) -> None:
+    """Update containers that use Docker's NanoCpus limit mode."""
+    response = client.api._post_json(
+        client.api._url("/containers/{0}/update", container.id),
+        data={
+            "NanoCpus": nano_cpus,
+            "Memory": memory_bytes,
+            "MemorySwap": memory_bytes,
+        },
+    )
+    client.api._raise_for_status(response)
 
 
 def _has_unlimited_limit(limits: dict) -> bool:

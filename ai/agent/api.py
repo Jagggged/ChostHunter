@@ -23,7 +23,14 @@ from ai.agent.action_log import (
 )
 from ai.agent.controller import list_managed_containers, update_limits
 from ai.agent.controller import container_exists
-from ai.agent.global_state import read_global_state, set_autopilot_enabled
+from ai.agent.finetune_log import read_finetune_runs
+from ai.agent.global_state import (
+    get_finetune_settings,
+    read_global_state,
+    set_autopilot_enabled,
+    set_finetune_enabled,
+    update_finetune_settings,
+)
 from ai.agent.notifier import send_test_notification
 from ai.agent.policy_store import set_policy_override
 from ai.agent.settings_store import public_slack_settings, update_slack_settings
@@ -67,8 +74,16 @@ class ControlAPIHandler(BaseHTTPRequestHandler):
                 })
             elif path == "/api/state":
                 self._send_json({"state": read_global_state()})
+            elif path == "/api/finetune/runs":
+                limit = _parse_limit(query.get("limit", [None])[0], default=20)
+                self._send_json({"runs": read_finetune_runs(limit=limit)})
+            elif path == "/api/finetune/latest":
+                runs = read_finetune_runs(limit=1)
+                self._send_json({"run": runs[0] if runs else None})
             elif path == "/api/settings/notifications":
                 self._send_json({"slack": public_slack_settings()})
+            elif path == "/api/settings/finetune":
+                self._send_json({"settings": get_finetune_settings()})
             else:
                 self._send_error(HTTPStatus.NOT_FOUND, "unknown endpoint")
         except Exception as exc:
@@ -87,6 +102,10 @@ class ControlAPIHandler(BaseHTTPRequestHandler):
                 self._handle_set_policy(container_name.strip("/"))
             elif path == "/api/state/autopilot":
                 self._handle_set_autopilot()
+            elif path == "/api/state/finetune":
+                self._handle_set_finetune()
+            elif path == "/api/settings/finetune":
+                self._handle_set_finetune_settings()
             elif path == "/api/settings/notifications/slack":
                 self._handle_set_slack_notifications()
             elif path == "/api/settings/notifications/slack/test":
@@ -208,6 +227,39 @@ class ControlAPIHandler(BaseHTTPRequestHandler):
         )
         self._send_json({"state": state, "action": action})
 
+    def _handle_set_finetune(self) -> None:
+        payload = self._read_json_body()
+        enabled = payload.get("enabled")
+        if not isinstance(enabled, bool):
+            self._send_error(HTTPStatus.BAD_REQUEST, "enabled must be a boolean")
+            return
+
+        state = set_finetune_enabled(enabled)
+        action = record_action(
+            container_name="__finetune__",
+            policy="global",
+            status="finetune_updated",
+            reason=f"runtime fine-tuning set to {'on' if enabled else 'off'}",
+        )
+        self._send_json({"state": state, "action": action})
+
+    def _handle_set_finetune_settings(self) -> None:
+        payload = self._read_json_body()
+        try:
+            updates = _coerce_finetune_settings(payload)
+        except ValueError as exc:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+
+        settings = update_finetune_settings(updates)
+        action = record_action(
+            container_name="__finetune__",
+            policy="global",
+            status="finetune_settings_updated",
+            reason="runtime fine-tuning settings updated",
+        )
+        self._send_json({"settings": settings, "action": action})
+
     def _handle_set_slack_notifications(self) -> None:
         payload = self._read_json_body()
         enabled = payload.get("enabled")
@@ -292,6 +344,81 @@ def _friendly_error_message(exc: Exception) -> str:
     if "No such container" in message or "404 Client Error" in message:
         return "container does not exist"
     return message[:200]
+
+
+def _coerce_finetune_settings(payload: dict) -> dict:
+    updates = {}
+    integer_fields = {
+        "interval_sec": (1, None),
+        "initial_delay_sec": (0, None),
+        "history_sec": (1, None),
+        "max_containers": (0, None),
+    }
+    float_fields = {
+        "skip_cpu_threshold": (0.0, None),
+        "skip_memory_threshold": (0.0, None),
+    }
+
+    for key, (minimum, maximum) in integer_fields.items():
+        if key in payload:
+            updates[key] = _coerce_int(payload[key], key, minimum, maximum)
+
+    for key, (minimum, maximum) in float_fields.items():
+        if key in payload:
+            updates[key] = _coerce_float(payload[key], key, minimum, maximum)
+
+    if "auto_promote" in payload:
+        if not isinstance(payload["auto_promote"], bool):
+            raise ValueError("auto_promote must be a boolean")
+        updates["auto_promote"] = payload["auto_promote"]
+
+    if "target_containers" in payload:
+        updates["target_containers"] = _coerce_container_list(payload["target_containers"])
+
+    return updates
+
+
+def _coerce_int(value, field: str, minimum: int, maximum: int | None) -> int:
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} must be an integer") from None
+    if coerced < minimum:
+        raise ValueError(f"{field} must be >= {minimum}")
+    if maximum is not None and coerced > maximum:
+        raise ValueError(f"{field} must be <= {maximum}")
+    return coerced
+
+
+def _coerce_float(value, field: str, minimum: float, maximum: float | None) -> float:
+    try:
+        coerced = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} must be a number") from None
+    if coerced < minimum:
+        raise ValueError(f"{field} must be >= {minimum}")
+    if maximum is not None and coerced > maximum:
+        raise ValueError(f"{field} must be <= {maximum}")
+    return coerced
+
+
+def _coerce_container_list(value) -> list[str]:
+    if isinstance(value, str):
+        raw_items = value.split(",")
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        raise ValueError("target_containers must be a list or comma-separated string")
+
+    names = []
+    seen = set()
+    for raw in raw_items:
+        name = str(raw).strip()
+        if not name or name in seen:
+            continue
+        names.append(name)
+        seen.add(name)
+    return names
 
 
 def start_api_server(

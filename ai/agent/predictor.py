@@ -8,6 +8,8 @@
 - 추론이 병목이 되면 그때 model = torch.compile(model) 한 줄 추가
 """
 
+import math
+
 import numpy as np
 import torch
 
@@ -51,7 +53,10 @@ def predict(model: LightweightLSTM, recent_window: np.ndarray) -> np.ndarray:
     return pred.cpu().numpy()[0]   # batch 차원 제거
 
 
-def recommend_limits(prediction_unscaled: np.ndarray) -> dict:
+def recommend_limits(
+    prediction_unscaled: np.ndarray,
+    current_limits: dict | None = None,
+) -> dict:
     """
     예측값(원래 스케일)을 바탕으로 컨테이너 리소스 권고값을 계산한다.
     안전 버퍼와 Minimum Floor를 적용한다.
@@ -74,7 +79,53 @@ def recommend_limits(prediction_unscaled: np.ndarray) -> dict:
     mem_bytes = int(mem_kb * 1024 * (1 + config.SAFETY_BUFFER))
     mem_bytes = max(mem_bytes, config.MIN_MEMORY_BYTES)
 
-    return {"cpu_quota": cpu_quota, "memory_bytes": mem_bytes}
+    return _apply_recommendation_caps(
+        cpu_quota=cpu_quota,
+        memory_bytes=mem_bytes,
+        current_limits=current_limits,
+    )
+
+
+def _apply_recommendation_caps(
+    *,
+    cpu_quota: float,
+    memory_bytes: int,
+    current_limits: dict | None,
+) -> dict:
+    """Clamp and round recommendations so the agent cannot grow limits wildly."""
+    cpu_quota = _round_up(cpu_quota, config.CPU_QUOTA_STEP)
+    memory_bytes = int(_round_up(float(memory_bytes), float(config.MEMORY_STEP_BYTES)))
+    cpu_quota = min(cpu_quota, config.MAX_CPU_QUOTA)
+    memory_bytes = min(memory_bytes, config.MAX_MEMORY_BYTES)
+
+    if current_limits:
+        current_cpu = _current_cpu_cores(current_limits)
+        current_memory = int(current_limits.get("memory_bytes", 0) or 0)
+        max_increase = max(config.MAX_LIMIT_INCREASE_RATIO, 0.0)
+        if current_cpu > 0:
+            cpu_quota = min(cpu_quota, current_cpu * max_increase)
+        if current_memory > 0:
+            memory_bytes = min(memory_bytes, int(current_memory * max_increase))
+
+    cpu_quota = max(cpu_quota, config.MIN_CPU_QUOTA)
+    memory_bytes = max(memory_bytes, config.MIN_MEMORY_BYTES)
+    return {"cpu_quota": cpu_quota, "memory_bytes": memory_bytes}
+
+
+def _current_cpu_cores(current_limits: dict) -> float:
+    nano_cpus = int(current_limits.get("nano_cpus", 0) or 0)
+    if nano_cpus > 0:
+        return nano_cpus / 1_000_000_000
+    cpu_quota = float(current_limits.get("cpu_quota", 0) or 0)
+    if cpu_quota > 0:
+        return cpu_quota / 100_000
+    return 0.0
+
+
+def _round_up(value: float, step: float) -> float:
+    if step <= 0:
+        return value
+    return math.ceil(value / step) * step
 
 
 def inverse_scale(prediction_scaled: np.ndarray) -> np.ndarray:

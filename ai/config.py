@@ -9,8 +9,35 @@ from ai.env import load_env_file
 
 load_env_file()
 
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
 # ── LSTM 모델 하이퍼파라미터 ──────────────────────────────
-WINDOW_SIZE = 60          # 입력 시계열 길이 (과거 60 step)
+WINDOW_SIZE = _env_int("WINDOW_SIZE", 60)          # 입력 시계열 길이 (과거 60 step)
 PREDICT_HORIZON = 10      # 예측 길이 (미래 10 step)
 N_FEATURES = 2            # 입력 피처 수 (CPU, Memory)
 LSTM_UNITS = [64, 32]     # 2층 LSTM unit 수 (Lightweight)
@@ -48,14 +75,26 @@ ACTIVE_VM_MIN_CPU_MAX = 10.0  # CPU max가 이 % 이상인 VM만 사용
 ACTIVE_VM_MIN_CPU_STD = 1.0   # 또는 표준편차가 이 값 이상인 VM (둘 중 하나만 만족하면 OK)
 
 # ── Online Learning (Fine-tuning) ────────────────────────
-FINETUNE_INTERVAL_SEC = 3600   # 1시간마다 fine-tune
-FINETUNE_EPOCHS = 5             # fine-tune 시 적은 epoch
-ENABLE_ONLINE_FINETUNE = False  # 기본 런타임 루프는 학습 없이 추론만 수행
+ENABLE_ONLINE_FINETUNE = _env_bool("ENABLE_ONLINE_FINETUNE", False)
+FINETUNE_INTERVAL_SEC = _env_int("FINETUNE_INTERVAL_SEC", 6 * 60 * 60)
+FINETUNE_INITIAL_DELAY_SEC = _env_int("FINETUNE_INITIAL_DELAY_SEC", 5 * 60)
+FINETUNE_EPOCHS = _env_int("FINETUNE_EPOCHS", 2)
+FINETUNE_HISTORY_SEC = _env_int("FINETUNE_HISTORY_SEC", 6 * 60 * 60)
+FINETUNE_MAX_CONTAINERS = _env_int("FINETUNE_MAX_CONTAINERS", 3)
+FINETUNE_MIN_SAMPLES = _env_int("FINETUNE_MIN_SAMPLES", 32)
+FINETUNE_MAX_SAMPLES = _env_int("FINETUNE_MAX_SAMPLES", 512)
+FINETUNE_VALIDATION_SPLIT = _env_float("FINETUNE_VALIDATION_SPLIT", 0.2)
+FINETUNE_CPU_THREADS = _env_int("FINETUNE_CPU_THREADS", 1)
+FINETUNE_MAX_DURATION_SEC = _env_int("FINETUNE_MAX_DURATION_SEC", 120)
+FINETUNE_MIN_IMPROVEMENT = _env_float("FINETUNE_MIN_IMPROVEMENT", 0.0)
+FINETUNE_AUTO_PROMOTE = _env_bool("FINETUNE_AUTO_PROMOTE", True)
+FINETUNE_SKIP_CPU_THRESHOLD = _env_float("FINETUNE_SKIP_CPU_THRESHOLD", 0.85)
+FINETUNE_SKIP_MEMORY_THRESHOLD = _env_float("FINETUNE_SKIP_MEMORY_THRESHOLD", 0.85)
 
 # ── 추론 설정 ─────────────────────────────────────────────
 # 데모용으로 짧게 설정. 운영에서는 학습 단위(5분)에 맞춰 INTERVAL=300, STEP=300 권장.
-INFERENCE_INTERVAL_SEC = 60     # 1분마다 추론 사이클
-INFERENCE_STEP_SEC = 30         # Prometheus 쿼리 step (60 step × 30s = 30분치 윈도우)
+INFERENCE_INTERVAL_SEC = _env_int("INFERENCE_INTERVAL_SEC", 60)     # 1분마다 추론 사이클
+INFERENCE_STEP_SEC = _env_int("INFERENCE_STEP_SEC", 30)         # Prometheus 쿼리 step (60 step × 30s = 30분치 윈도우)
 
 # torch.compile JIT 가속 활성화 여부.
 # - True: 첫 호출 시 컴파일 오버헤드(10~30s) 후 추론 빨라짐
@@ -67,6 +106,11 @@ USE_TORCH_COMPILE = False
 SAFETY_BUFFER = 0.30            # 예측값 위에 30% 버퍼
 MIN_CPU_QUOTA = 0.1             # 최소 CPU (코어 단위)
 MIN_MEMORY_BYTES = 64 * 1024 * 1024  # 최소 메모리 64MB
+MAX_CPU_QUOTA = _env_float("MAX_CPU_QUOTA", 4.0)
+MAX_MEMORY_BYTES = _env_int("MAX_MEMORY_BYTES", 2 * 1024 * 1024 * 1024)
+MAX_LIMIT_INCREASE_RATIO = _env_float("MAX_LIMIT_INCREASE_RATIO", 1.0)
+CPU_QUOTA_STEP = _env_float("CPU_QUOTA_STEP", 0.01)
+MEMORY_STEP_BYTES = _env_int("MEMORY_STEP_BYTES", 16 * 1024 * 1024)
 
 # ── Watchdog (비상 롤백) ──────────────────────────────────
 WATCHDOG_INTERVAL_SEC = 1       # 1초마다 사용률 체크
@@ -106,11 +150,15 @@ INFRA_CONTAINER_NAMES = ["cadvisor", "prometheus", "grafana", "ai-agent", "alert
 # ── 경로 ──────────────────────────────────────────────────
 MODEL_DIR = "models"
 PRETRAINED_MODEL_PATH = f"{MODEL_DIR}/pretrained.pt"
+RUNTIME_MODEL_DIR = f"{MODEL_DIR}/runtime"
+ACTIVE_MODEL_PATH = f"{RUNTIME_MODEL_DIR}/active.pt"
+CANDIDATE_MODEL_DIR = f"{RUNTIME_MODEL_DIR}/candidates"
 SCALER_PATH = f"{MODEL_DIR}/scaler.pkl"
 TRAINING_HISTORY_PATH = f"{MODEL_DIR}/training_history.json"
 TRAINING_CURVE_PATH = f"{MODEL_DIR}/training_curve.png"
 LOG_DIR = "logs"
 ACTION_LOG_PATH = f"{LOG_DIR}/actions.jsonl"
+FINETUNE_RUN_LOG_PATH = f"{LOG_DIR}/finetune_runs.jsonl"
 POLICY_OVERRIDE_PATH = f"{LOG_DIR}/policy_overrides.json"
 GLOBAL_STATE_PATH = f"{LOG_DIR}/global_state.json"
 NOTIFICATION_LOG_PATH = f"{LOG_DIR}/notifications.jsonl"
@@ -125,5 +173,7 @@ SLACK_NOTIFY_STATUSES = {
     "failed",
     "policy_updated",
     "autopilot_updated",
+    "finetune_updated",
+    "finetune_settings_updated",
 }
 SLACK_TIMEOUT_SEC = 5
