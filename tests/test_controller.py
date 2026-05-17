@@ -39,6 +39,14 @@ def test_resolve_policy_prioritizes_skip_label(monkeypatch):
     assert controller._resolve_policy(container) == "skip"
 
 
+def test_resolve_policy_allows_runtime_override_over_skip_label(monkeypatch):
+    monkeypatch.setattr(controller, "get_policy_override", lambda name: "auto")
+
+    container = FakeContainer(labels={f"{config.LABEL_PREFIX}.skip": "true"})
+
+    assert controller._resolve_policy(container) == "auto"
+
+
 def test_resolve_policy_uses_explicit_valid_policy(monkeypatch):
     monkeypatch.setattr(controller, "get_policy_override", lambda name: None)
 

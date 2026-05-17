@@ -28,7 +28,7 @@
       "title": "CPU Usage per Container",
       "description": "Each container's CPU usage rate (cores/sec)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
@@ -55,7 +55,7 @@
       "title": "Memory Usage per Container",
       "description": "Each container's current memory usage",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
@@ -80,7 +80,7 @@
       "title": "Network RX (Received) per Container",
       "description": "Network bytes received per second",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
@@ -105,7 +105,7 @@
       "title": "Network TX (Transmitted) per Container",
       "description": "Network bytes transmitted per second",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
@@ -130,7 +130,7 @@
       "title": "Container CPU Usage Ranking",
       "description": "Current CPU usage ranking across all containers",
       "type": "bargauge",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
@@ -164,7 +164,7 @@
       "title": "Container Memory Usage Ranking",
       "description": "Current memory usage ranking across all containers",
       "type": "bargauge",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
@@ -191,6 +191,20 @@
         "orientation": "horizontal",
         "displayMode": "gradient",
         "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Chost Hunter AI Control",
+      "description": "AI recommendations, policy controls, fine-tuning, and Slack settings",
+      "type": "chosthunter-ai-control-panel",
+      "gridPos": { "h": 24, "w": 8, "x": 16, "y": 0 },
+      "options": {
+        "apiBase": "http://127.0.0.1:8000"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
       }
     }
   ],

@@ -1,0 +1,18 @@
+{
+  "type": "panel",
+  "name": "Chost Hunter AI Control Panel",
+  "id": "chosthunter-ai-control-panel",
+  "info": {
+    "description": "Chost Hunter recommendations and runtime controls",
+    "author": {
+      "name": "Chost Hunter"
+    },
+    "keywords": ["chost", "container", "ai", "resource"],
+    "version": "0.2.0",
+    "updated": "2026-05-17"
+  },
+  "dependencies": {
+    "grafanaDependency": ">=10.0.0",
+    "plugins": []
+  }
+}

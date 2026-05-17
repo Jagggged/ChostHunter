@@ -27,6 +27,36 @@ def _format_limits(limits: dict | None) -> str:
     return f"CPU {_format_cpu(cpu)}, Memory {_format_bytes(mem)}"
 
 
+def _status_label(status: str) -> str:
+    labels = {
+        "applied": "적용됨",
+        "recommended": "권고",
+        "skipped": "건너뜀",
+        "failed": "실패",
+        "rolled_back": "롤백됨",
+        "rollback_failed": "롤백 실패",
+        "promoted": "승격됨",
+        "rejected": "거절됨",
+        "validated": "검증됨",
+        "notification_test": "알림 테스트",
+        "finetune_updated": "파인튜닝 전환",
+        "finetune_settings_updated": "파인튜닝 설정 변경",
+    }
+    return labels.get(status, status)
+
+
+def _policy_label(policy: str) -> str:
+    labels = {
+        "auto": "자동 적용",
+        "advisory": "권고만",
+        "skip": "제외",
+        "global": "전체 설정",
+        "notification": "알림",
+        "manual": "수동 적용",
+    }
+    return labels.get(policy, policy)
+
+
 def _format_cpu(cpu_quota: float | int | None) -> str:
     if cpu_quota is None:
         return "-"
@@ -58,23 +88,25 @@ def _build_slack_payload(action: dict) -> dict:
     policy = action.get("policy", "unknown")
     reason = action.get("reason") or action.get("error") or ""
 
-    text = f"Chost Hunter: {status} - {container}"
+    status_text = _status_label(status)
+    policy_text = _policy_label(policy)
+    text = f"Chost Hunter: {status_text} - {container}"
     fields = [
-        {"type": "mrkdwn", "text": f"*Container*\n{container}"},
-        {"type": "mrkdwn", "text": f"*Status*\n{status}"},
-        {"type": "mrkdwn", "text": f"*Policy*\n{policy}"},
+        {"type": "mrkdwn", "text": f"*컨테이너*\n{container}"},
+        {"type": "mrkdwn", "text": f"*상태*\n{status_text}"},
+        {"type": "mrkdwn", "text": f"*정책*\n{policy_text}"},
         {
             "type": "mrkdwn",
-            "text": f"*Recommended*\n{_format_limits(action.get('recommended_limits'))}",
+            "text": f"*권고 limit*\n{_format_limits(action.get('recommended_limits'))}",
         },
     ]
     if action.get("applied_limits"):
         fields.append({
             "type": "mrkdwn",
-            "text": f"*Applied*\n{_format_limits(action.get('applied_limits'))}",
+            "text": f"*적용 limit*\n{_format_limits(action.get('applied_limits'))}",
         })
     if reason:
-        fields.append({"type": "mrkdwn", "text": f"*Reason*\n{reason[:500]}"})
+        fields.append({"type": "mrkdwn", "text": f"*사유*\n{reason[:500]}"})
 
     return {
         "text": text,
@@ -101,6 +133,16 @@ def _send_slack_payload(webhook_url: str, payload: dict) -> tuple[bool, str | No
     return True, None
 
 
+def _is_routine_noop_recommendation(action: dict) -> bool:
+    """Suppress per-loop recommendations that did not change any limit."""
+    reason = action.get("reason") or ""
+    return (
+        action.get("status") == "recommended"
+        and "already applied" in reason
+        and action.get("applied_limits") is None
+    )
+
+
 def _record_notification(action: dict, status: str, detail: str | None = None) -> None:
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -124,6 +166,8 @@ def notify_action(action: dict) -> None:
 
     status = action.get("status")
     if status not in config.SLACK_NOTIFY_STATUSES:
+        return
+    if _is_routine_noop_recommendation(action):
         return
 
     webhook_url = slack["webhook_url"]
@@ -150,17 +194,17 @@ def send_test_notification() -> tuple[bool, str | None]:
         return False, "Slack webhook URL is not configured"
 
     payload = {
-        "text": "Chost Hunter Slack test",
+        "text": "Chost Hunter Slack 테스트",
         "blocks": [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": "Chost Hunter Slack test"},
+                "text": {"type": "plain_text", "text": "Chost Hunter Slack 테스트"},
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": "Slack notifications are connected.",
+                    "text": "Slack 알림 연결이 정상입니다.",
                 },
             },
         ],
